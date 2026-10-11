@@ -72,6 +72,7 @@
     <header class="topbar">
       <div class="small muted">Комната <b id="gameCode"></b> · раунд <b id="roundNo"></b></div>
       <div class="topbar-actions">
+        <button id="muteBtn" class="btn btn-small btn-ghost">🔊</button>
         <button id="logToggle" class="btn btn-small btn-ghost">Журнал</button>
         <button id="gameLeaveBtn" class="btn btn-small btn-ghost">Выйти</button>
       </div>
@@ -79,7 +80,7 @@
 
     <div id="opponents" class="opponents"></div>
 
-    <div class="table">
+    <div id="table" class="table">
       <div class="pile">
         <div id="deck" class="card back" title="Взять карту"><span class="back-label">UNO</span></div>
         <div id="deckCount" class="pile-label muted small"></div>
@@ -140,6 +141,7 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <script src="fx.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

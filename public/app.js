@@ -14,6 +14,9 @@
   let prevTopId = null;
   let prevTurnMine = false;
   let lastLogId = 0;
+  let lastFxId = null;   // последний обработанный эффект (null — ещё не инициализировано)
+  let playRect = null;   // откуда полетела моя карта
+  let prevPlayerCount = 0;
 
   /* ---------- хранилище ---------- */
   const store = {
@@ -47,11 +50,13 @@
     if (es) es.close();
     const url = `api/events?room=${encodeURIComponent(session.room)}&token=${encodeURIComponent(session.token)}`;
     es = new EventSource(url);
+    lastFxId = null;
     es.onopen = () => $('conn').classList.add('hidden');
     es.onmessage = (e) => {
       $('conn').classList.add('hidden');
-      try { view = JSON.parse(e.data); } catch (err) { return; }
-      render();
+      let nv;
+      try { nv = JSON.parse(e.data); } catch (err) { return; }
+      handleView(nv);
     };
     es.addEventListener('kicked', () => {
       es.close(); es = null;
@@ -157,6 +162,10 @@
   $('passBtn').onclick = () => act('pass');
   $('unoBtn').onclick = () => act('uno');
   $('nextRoundBtn').onclick = () => act('nextRound');
+  function syncMute() { $('muteBtn').textContent = UnoFX.isMuted() ? '🔇' : '🔊'; $('muteBtn').title = UnoFX.isMuted() ? 'Включить звук' : 'Выключить звук'; }
+  $('muteBtn').onclick = () => { UnoFX.setMuted(!UnoFX.isMuted()); syncMute(); if (!UnoFX.isMuted()) UnoFX.sfx.flick(); };
+  syncMute();
+  UnoFX.setCardFactory((c, o) => makeCard(c, o));
   $('logToggle').onclick = () => $('logPanel').classList.toggle('open');
   $('logClose').onclick = () => $('logPanel').classList.remove('open');
 
@@ -170,11 +179,13 @@
   $('colorCancel').onclick = () => { pendingWildId = null; $('colorPicker').classList.add('hidden'); };
 
   function onCardClick(card, el) {
-    if (!view || view.turnId !== view.me) { toast('Сейчас не ваш ход'); return; }
+    if (!view || view.turnId !== view.me) { toast('Сейчас не ваш ход'); UnoFX.sfx.error(); return; }
     if (!view.playable.includes(card.id)) {
       el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake');
+      UnoFX.sfx.error();
       return;
     }
+    playRect = el.getBoundingClientRect();
     if (card.color === 'wild') {
       pendingWildId = card.id;
       $('colorPicker').classList.remove('hidden');
@@ -223,6 +234,61 @@
   function sortHand(hand) {
     const vo = (v) => (v in VALUE_ORDER ? VALUE_ORDER[v] : Number(v));
     return hand.slice().sort((a, b) => COLOR_ORDER[a.color] - COLOR_ORDER[b.color] || vo(a.value) - vo(b.value));
+  }
+
+  /* ---------- новое состояние + эффекты ---------- */
+  function handleView(nv) {
+    const fresh = lastFxId === null;
+    const entries = fresh ? [] : nv.log.filter((x) => x.id > lastFxId && x.fx);
+    if (nv.log.length) lastFxId = Math.max(lastFxId || 0, nv.log[nv.log.length - 1].id);
+    const wasMine = prevTurnMine;
+    const prevCount = prevPlayerCount;
+    view = nv;
+    render();
+    const myTurn = view.phase === 'playing' && view.turnId === view.me;
+    prevTurnMine = myTurn;
+    prevPlayerCount = view.players.length;
+
+    if (fresh) return;
+    if (view.phase === 'lobby') {
+      if (view.players.length > prevCount) UnoFX.sfx.join();
+      return;
+    }
+    const dur = UnoFX.process(entries, fxContext());
+    playRect = null;
+    if (myTurn && !wasMine) {
+      setTimeout(() => {
+        if (!(view && view.phase === 'playing' && view.turnId === view.me)) return;
+        UnoFX.myTurn();
+        const st = $('status');
+        st.classList.remove('flash'); void st.offsetWidth; st.classList.add('flash');
+        if (navigator.vibrate) { try { navigator.vibrate(80); } catch (e) { /* ignore */ } }
+      }, dur + 80);
+    }
+  }
+
+  function fxContext() {
+    const boxOf = (id) => document.querySelector(`.opp[data-id="${id}"]`);
+    const handRect = () => {
+      const cards = $('hand').querySelectorAll('.card');
+      return cards.length ? cards[cards.length - 1].getBoundingClientRect() : $('hand').getBoundingClientRect();
+    };
+    return {
+      me: view.me,
+      topId: view.top ? view.top.id : null,
+      playRect,
+      deckEl: $('deck'),
+      discardEl: $('discard'),
+      dirEl: $('dirIndicator'),
+      handRect,
+      boxOf: (id) => (id === view.me ? $('hand') : boxOf(id)),
+      rectOf: (id) => {
+        if (id === view.me) return handRect();
+        const b = boxOf(id);
+        return b ? b.getBoundingClientRect() : $('deck').getBoundingClientRect();
+      },
+      playerIds: () => view.players.map((p) => p.id),
+    };
   }
 
   /* ---------- общий рендер ---------- */
@@ -300,6 +366,7 @@
       const p = view.players[(myIdx + k) % n];
       const box = document.createElement('div');
       box.className = 'opp' + (p.id === view.turnId ? ' turn' : '') + (p.online ? '' : ' offline');
+      box.dataset.id = p.id;
       const head = document.createElement('div'); head.className = 'opp-head';
       const av = document.createElement('div'); av.className = 'avatar'; av.textContent = p.name[0].toUpperCase();
       const nm = document.createElement('div'); nm.className = 'opp-name'; nm.textContent = p.name + (p.id === view.hostId ? ' 👑' : '');
@@ -345,6 +412,7 @@
       badge.style.color = getComputedStyle(document.documentElement).getPropertyValue('--' + view.currentColor);
     }
     $('dirIndicator').classList.toggle('ccw', view.direction < 0);
+    if (view.currentColor) $('table').style.setProperty('--glow', `var(--${view.currentColor})`);
 
     // Статус
     const st = $('status');
@@ -378,8 +446,6 @@
     // Индикация хода
     document.body.classList.toggle('my-turn', myTurn);
     document.title = (myTurn ? '▶ Ваш ход — ' : '') + 'UNO онлайн';
-    if (myTurn && !prevTurnMine && navigator.vibrate) { try { navigator.vibrate(80); } catch (e) { /* ignore */ } }
-    prevTurnMine = myTurn;
     if (!myTurn && pendingWildId) { pendingWildId = null; $('colorPicker').classList.add('hidden'); }
 
     renderLog();

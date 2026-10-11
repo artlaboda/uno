@@ -140,7 +140,7 @@ function recycleDeck(room) {
   const top = room.discard.pop();
   room.deck = shuffle(room.discard);
   room.discard = [top];
-  log(room, 'Колода закончилась — сброс перемешан');
+  log(room, 'Колода закончилась — сброс перемешан', { fx: 'shuffle' });
 }
 
 function drawCards(room, player, n) {
@@ -191,7 +191,7 @@ function startRound(room) {
   room.phase = 'playing';
   setTurn(room, room.roundNo % room.players.length);
   room.roundNo++;
-  log(room, `Раунд ${room.roundNo} начался. Первым ходит ${currentPlayer(room).name}`);
+  log(room, `Раунд ${room.roundNo} начался. Первым ходит ${currentPlayer(room).name}`, { fx: 'deal' });
 }
 
 function playCard(room, player, cardId, chosenColor) {
@@ -210,7 +210,7 @@ function playCard(room, player, cardId, chosenColor) {
   room.discard.push(card);
   room.currentColor = isWild ? chosenColor : card.color;
   room.drawnCardId = null;
-  log(room, `${player.name} кладёт`, { card, color: isWild ? chosenColor : null });
+  log(room, `${player.name} кладёт`, { card, color: isWild ? chosenColor : null, fx: 'play', by: player.id, last: player.hand.length });
 
   const n = room.players.length;
   const victimIdx = nextIndex(room, room.turn, 1);
@@ -219,20 +219,20 @@ function playCard(room, player, cardId, chosenColor) {
   if (card.value === 'draw2' || card.value === 'wild4') {
     const k = card.value === 'draw2' ? 2 : 4;
     drawCards(room, victim, k);
-    log(room, `${victim.name} берёт ${k} карты и пропускает ход`);
+    log(room, `${victim.name} берёт ${k} карты и пропускает ход`, { fx: 'draw', target: victim.id, n: k, penalty: true });
   }
 
   if (player.hand.length === 0) return endRound(room, player);
 
   switch (card.value) {
     case 'skip':
-      log(room, `${victim.name} пропускает ход`);
+      log(room, `${victim.name} пропускает ход`, { fx: 'skip', target: victim.id });
       advance(room, 2);
       break;
     case 'reverse':
       room.direction *= -1;
-      if (n === 2) { advance(room, 2); log(room, `${victim.name} пропускает ход`); }
-      else { advance(room, 1); log(room, 'Направление игры изменилось'); }
+      if (n === 2) { advance(room, 2); log(room, `${victim.name} пропускает ход`, { fx: 'reverse', target: victim.id }); }
+      else { advance(room, 1); log(room, 'Направление игры изменилось', { fx: 'reverse' }); }
       break;
     case 'draw2':
     case 'wild4':
@@ -255,7 +255,7 @@ function endRound(room, winner) {
   room.drawnCardId = null;
   room.gameOver = winner.score >= TARGET_SCORE;
   room.lastRound = { winnerId: winner.id, winnerName: winner.name, points, hands };
-  log(room, `${winner.name} выигрывает раунд и получает ${points} очк.`);
+  log(room, `${winner.name} выигрывает раунд и получает ${points} очк.`, { fx: 'win', by: winner.id, game: room.gameOver });
   if (room.gameOver) log(room, `${winner.name} набирает ${winner.score} очков и побеждает в игре!`);
 }
 
@@ -404,9 +404,9 @@ function handleApi(name, body) {
         if (!card) { log(room, `${player.name} пропускает ход (колода пуста)`); advance(room, 1); break; }
         if (isPlayable(room, player, card)) {
           room.drawnCardId = card.id;
-          log(room, `${player.name} берёт карту`);
+          log(room, `${player.name} берёт карту`, { fx: 'draw', target: player.id, n: 1 });
         } else {
-          log(room, `${player.name} берёт карту и пропускает ход`);
+          log(room, `${player.name} берёт карту и пропускает ход`, { fx: 'draw', target: player.id, n: 1 });
           advance(room, 1);
         }
         break;
@@ -424,7 +424,7 @@ function handleApi(name, body) {
         if (!(player.hand.length === 1 || (myTurn && player.hand.length === 2))) fail('UNO можно крикнуть, когда остаётся одна карта');
         if (player.saidUno) break;
         player.saidUno = true;
-        log(room, `${player.name}: «UNO!»`, { uno: true });
+        log(room, `${player.name}: «UNO!»`, { uno: true, fx: 'uno', by: player.id });
         break;
 
       case 'catch': {
@@ -433,7 +433,7 @@ function handleApi(name, body) {
         if (!target || target === player) fail('Некого ловить');
         if (target.hand.length !== 1 || target.saidUno) fail('Поздно — ловить уже нечего');
         drawCards(room, target, 2);
-        log(room, `${player.name} ловит ${target.name} без «UNO» — штраф +2 карты`);
+        log(room, `${player.name} ловит ${target.name} без «UNO» — штраф +2 карты`, { fx: 'catch', by: player.id, target: target.id, n: 2 });
         break;
       }
 
@@ -505,6 +505,7 @@ const STATIC = {
   '/index.html': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'application/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
+  '/fx.js': ['fx.js', 'application/javascript; charset=utf-8'],
 };
 
 function serveStatic(pathname, res) {
@@ -565,7 +566,7 @@ setInterval(() => {
     const since = Math.max(cur.disconnectedAt || 0, room.turnStartedAt);
     if (now - since < AFK_SECONDS * 1000) continue;
     if (!room.drawnCardId) drawCards(room, cur, 1);
-    log(room, `${cur.name} не в сети — автоматически берёт карту и пропускает ход`);
+    log(room, `${cur.name} не в сети — автоматически берёт карту и пропускает ход`, { fx: 'draw', target: cur.id, n: room.drawnCardId ? 0 : 1 });
     advance(room, 1);
     broadcast(room);
   }
