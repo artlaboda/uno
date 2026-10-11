@@ -21,6 +21,11 @@
         <input id="nameInput" maxlength="20" autocomplete="nickname" placeholder="Например, Артём">
       </label>
 
+      <div class="settings-box">
+        <div class="set-row"><span class="set-label">⏱ Раунд</span><div id="homeRound" class="chips"></div></div>
+        <div class="set-row"><span class="set-label">🏆 Партия до</span><div id="homeTarget" class="chips"></div></div>
+      </div>
+
       <div class="mode">
         <div class="mode-title">🤖 С компьютером</div>
         <div class="bot-count">
@@ -60,6 +65,11 @@
       <ul id="lobbyPlayers" class="lobby-players"></ul>
       <button id="addBotBtn" class="btn btn-ghost btn-wide btn-dashed">🤖 Добавить компьютер</button>
 
+      <div class="settings-box">
+        <div class="set-row"><span class="set-label">⏱ Раунд</span><div id="lobbyRound" class="chips"></div></div>
+        <div class="set-row"><span class="set-label">🏆 Партия до</span><div id="lobbyTarget" class="chips"></div></div>
+      </div>
+
       <button id="startBtn" class="btn btn-primary btn-wide">Начать игру</button>
       <p id="lobbyWait" class="muted center hidden">Ждём, когда создатель комнаты начнёт игру…</p>
 
@@ -72,6 +82,7 @@
           <li>Нечем или не хочется ходить — возьмите карту. Если она подходит, её можно сразу сыграть, иначе ход переходит дальше.</li>
           <li>Когда остаётся одна карта — нажмите <b>UNO!</b> (можно заранее, держа 2 карты в свой ход). Не успели — любой может вас «поймать», и вы берёте 2 карты.</li>
           <li>Избавился от карт — выиграл раунд и получает очки за карты соперников: цифры по номиналу, ⊘ ⇄ +2 — по 20, «Закажи цвет» и +4 — по 50. Партия идёт до 500 очков.</li>
+          <li>Если у раунда есть лимит времени и он вышел, раунд выигрывает тот, у кого на руке меньше всего очков.</li>
           <li>Если игрок отключился, через 30 секунд за него автоматически берётся карта и ход переходит дальше.</li>
         </ul>
       </details>
@@ -83,7 +94,10 @@
   <!-- Игра -->
   <section id="game" class="screen hidden">
     <header class="topbar">
-      <div class="small muted">Комната <b id="gameCode"></b> · раунд <b id="roundNo"></b></div>
+      <div class="topbar-left">
+        <div class="small muted">Комната <b id="gameCode"></b> · раунд <b id="roundNo"></b></div>
+        <div id="roundTimer" class="round-timer hidden" title="До конца раунда"></div>
+      </div>
       <div class="topbar-actions">
         <button id="muteBtn" class="btn btn-small btn-ghost">🔊</button>
         <button id="logToggle" class="btn btn-small btn-ghost">Журнал</button>
@@ -147,6 +161,11 @@
         <thead><tr><th>Игрок</th><th>Карты на руке</th><th>Очки в раунде</th><th>Всего</th></tr></thead>
         <tbody id="scoreBody"></tbody>
       </table>
+      <p class="muted small hint">Очки получает только победитель раунда — сумму очков карт, оставшихся у соперников: цифры по номиналу, ⊘ ⇄ +2 — по 20, «Закажи цвет» и +4 — по 50. Если вышло время, побеждает тот, у кого на руке меньше всего очков.</p>
+      <div id="historyBox" class="history hidden">
+        <h4>История раундов</h4>
+        <ol id="historyList"></ol>
+      </div>
       <button id="nextRoundBtn" class="btn btn-primary btn-wide">Следующий раунд</button>
       <p id="roundWait" class="muted center hidden">Ждём создателя комнаты…</p>
     </div>

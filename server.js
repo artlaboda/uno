@@ -3,6 +3,11 @@
  * UNO — многопользовательская игра для браузера.
  * Сервер на чистом Node.js (без внешних зависимостей).
  * Запуск: node server.js   (порт по умолчанию 3000, можно задать PORT=8080)
+ *
+ * Сохранение игр:
+ *  - по умолчанию в файл data/rooms.json (путь можно задать DATA_FILE);
+ *  - если заданы UPSTASH_REDIS_REST_URL и UPSTASH_REDIS_REST_TOKEN — в базу Upstash Redis
+ *    (нужно для бесплатного Render, где файлы стираются при каждом перезапуске).
  */
 const http = require('http');
 const fs = require('fs');
@@ -16,7 +21,11 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 6;
 const HAND_SIZE = 7;
-const TARGET_SCORE = 500;          // до скольки очков идёт партия
+const TARGET_SCORE = 500;          // до скольки очков идёт партия (по умолчанию)
+const TARGET_OPTIONS = [100, 200, 300, 500];
+const ROUND_MINUTES = 10;          // длительность раунда по умолчанию, 0 — без ограничения
+const ROUND_MINUTE_OPTIONS = [0, 3, 5, 10, 15, 20];
+const PILE_VISIBLE = 10;           // сколько верхних карт сброса видно в стопке
 const AFK_SECONDS = 30;            // через сколько секунд за отключившегося игрока ход делается автоматически
 const ROOM_TTL_MS = 3 * 60 * 60 * 1000; // пустая комната удаляется через 3 часа без активности
 const BOT_NAMES = ['Вася', 'Маша', 'Гоша', 'Оля', 'Петя', 'Зина', 'Тоша', 'Лиза'];
@@ -28,6 +37,11 @@ const COLOR_NAMES = { red: 'красный', yellow: 'жёлтый', green: 'з�
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 const rooms = new Map();
+
+const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'rooms.json');
+const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/$/, '');
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+const UPSTASH_KEY = process.env.UPSTASH_KEY || 'uno:rooms';
 
 class GameError extends Error {}
 const fail = (msg) => { throw new GameError(msg); };
@@ -98,9 +112,27 @@ function createRoom() {
     logSeq: 0,
     clients: new Set(),
     lastActivity: Date.now(),
+    settings: { roundMinutes: ROUND_MINUTES, target: TARGET_SCORE },
+    roundStartedAt: null,
+    roundEndsAt: null,
+    history: [],
   };
   rooms.set(room.code, room);
   return room;
+}
+
+function applySettings(room, body) {
+  const st = room.settings;
+  if (body.roundMinutes !== undefined) {
+    const m = parseInt(body.roundMinutes, 10);
+    if (!ROUND_MINUTE_OPTIONS.includes(m)) fail('Недопустимое время раунда');
+    st.roundMinutes = m;
+  }
+  if (body.target !== undefined) {
+    const t = parseInt(body.target, 10);
+    if (!TARGET_OPTIONS.includes(t)) fail('Недопустимая цель партии');
+    st.target = t;
+  }
 }
 
 function addPlayer(room, name) {
@@ -190,6 +222,7 @@ function startRound(room) {
     room.players.forEach((p) => { p.score = 0; });
     room.gameOver = false;
     room.roundNo = 0;
+    room.history = [];
   }
   room.deck = buildDeck();
   room.discard = [];
@@ -207,6 +240,8 @@ function startRound(room) {
   room.discard.push(first);
   room.currentColor = first.color;
   room.phase = 'playing';
+  room.roundStartedAt = Date.now();
+  room.roundEndsAt = room.settings.roundMinutes ? room.roundStartedAt + room.settings.roundMinutes * 60000 : null;
   setTurn(room, room.roundNo % room.players.length);
   room.roundNo++;
   log(room, `Раунд ${room.roundNo} начался. Первым ходит ${currentPlayer(room).name}`, { fx: 'deal' });
@@ -261,20 +296,39 @@ function playCard(room, player, cardId, chosenColor) {
   }
 }
 
-function endRound(room, winner) {
+const handPoints = (p) => p.hand.reduce((s, c) => s + cardPoints(c), 0);
+
+// reason: 'out' — игрок избавился от карт, 'time' — вышло время раунда
+function endRound(room, winner, reason = 'out') {
   let points = 0;
   const hands = room.players.map((p) => {
-    const pts = p.hand.reduce((s, c) => s + cardPoints(c), 0);
-    points += pts;
+    const pts = handPoints(p);
+    if (p !== winner) points += pts;
     return { id: p.id, name: p.name, cards: p.hand.slice(), points: pts };
   });
   winner.score += points;
   room.phase = 'roundOver';
   room.drawnCardId = null;
-  room.gameOver = winner.score >= TARGET_SCORE;
-  room.lastRound = { winnerId: winner.id, winnerName: winner.name, points, hands };
+  room.gameOver = winner.score >= room.settings.target;
+  const durationSec = Math.round((Date.now() - (room.roundStartedAt || Date.now())) / 1000);
+  room.lastRound = { winnerId: winner.id, winnerName: winner.name, points, hands, reason, durationSec };
+  room.history.push({ round: room.roundNo, winnerName: winner.name, points, reason, durationSec });
+  if (room.history.length > 50) room.history.shift();
+  room.roundEndsAt = null;
   log(room, `${winner.name} выигрывает раунд и получает ${points} очк.`, { fx: 'win', by: winner.id, game: room.gameOver });
   if (room.gameOver) log(room, `${winner.name} набирает ${winner.score} очков и побеждает в игре!`);
+}
+
+// Время раунда вышло: побеждает тот, у кого на руке меньше всего очков (при равенстве — меньше карт)
+function endRoundByTime(room) {
+  const order = [];
+  for (let k = 0; k < room.players.length; k++) order.push(room.players[nextIndex(room, room.turn, k)]);
+  const winner = order.reduce((best, p) => {
+    const a = handPoints(p), b = handPoints(best);
+    return a < b || (a === b && p.hand.length < best.hand.length) ? p : best;
+  });
+  log(room, `Время раунда вышло! Меньше всего очков на руке у ${winner.name}`, { fx: 'timeup' });
+  endRound(room, winner, 'time');
 }
 
 function removePlayer(room, player) {
@@ -308,7 +362,7 @@ function removePlayer(room, player) {
       else room.turn = ni;               // ход у того же игрока, сдвинулся только индекс
     }
   }
-  if (!humans(room).length) { clearBotTimers(room); rooms.delete(room.code); }
+  if (!humans(room).length) { clearBotTimers(room); rooms.delete(room.code); markDirty(); }
 }
 
 /* ---------- представление состояния для конкретного игрока ---------- */
@@ -345,7 +399,13 @@ function viewFor(room, player) {
     roundNo: room.roundNo,
     lastRound: room.lastRound,
     gameOver: room.gameOver,
-    target: TARGET_SCORE,
+    target: room.settings.target,
+    settings: room.settings,
+    options: { roundMinutes: ROUND_MINUTE_OPTIONS, target: TARGET_OPTIONS },
+    roundEndsAt: room.roundEndsAt,
+    serverNow: Date.now(),
+    history: room.history.slice(-20),
+    pile: room.discard.slice(-PILE_VISIBLE),
     afkSeconds: AFK_SECONDS,
     log: room.log.slice(-14),
     limits: { min: MIN_PLAYERS, max: MAX_PLAYERS },
@@ -357,6 +417,7 @@ function broadcast(room) {
     try { c.res.write(`data: ${JSON.stringify(viewFor(room, c.player))}\n\n`); } catch (e) { /* ignore */ }
   }
   scheduleBots(room);
+  markDirty();
 }
 
 /* ---------- общие действия (для людей и компьютера) ---------- */
@@ -493,12 +554,14 @@ function handleApi(name, body) {
     const pname = cleanName(body.name);
     const room = createRoom();
     const player = addPlayer(room, pname);
+    applySettings(room, body);
     log(room, `${pname} создаёт комнату`);
     const nBots = Math.max(0, Math.min(MAX_PLAYERS - 1, parseInt(body.bots, 10) || 0));
     if (nBots) {
       for (let i = 0; i < nBots; i++) addBot(room);
       startRound(room);
     }
+    markDirty();
     return { room: room.code, token: player.token, playerId: player.id };
   }
 
@@ -566,6 +629,17 @@ function handleApi(name, body) {
         if (!isHost) fail('Следующий раунд запускает создатель комнаты');
         if (room.phase !== 'roundOver') fail('Раунд ещё не закончен');
         startRound(room);
+        break;
+
+      case 'settings':
+        if (!isHost) fail('Настройки меняет создатель комнаты');
+        if (room.phase === 'playing') fail('Настройки можно менять между раундами');
+        applySettings(room, body);
+        log(room, `Настройки: раунд — ${room.settings.roundMinutes ? room.settings.roundMinutes + ' мин' : 'без ограничения'}, партия до ${room.settings.target} очков`);
+        if (room.phase === 'roundOver') {
+          const leader = Math.max(...room.players.map((p) => p.score));
+          room.gameOver = leader >= room.settings.target;
+        }
         break;
 
       case 'addBot':
@@ -691,6 +765,12 @@ setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
     if (room.phase !== 'playing') continue;
+    if (room.roundEndsAt && now >= room.roundEndsAt) {
+      clearBotTimers(room);
+      endRoundByTime(room);
+      broadcast(room);
+      continue;
+    }
     const cur = currentPlayer(room);
     if (!cur || cur.isBot || cur.conns > 0) continue;
     if (!humans(room).some((p) => p.conns > 0)) continue; // все офлайн — ждём
@@ -708,10 +788,110 @@ setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
     for (const c of room.clients) { try { c.res.write(': ping\n\n'); } catch (e) { /* ignore */ } }
-    if (room.clients.size === 0 && now - room.lastActivity > ROOM_TTL_MS) rooms.delete(room.code);
+    if (room.clients.size === 0 && now - room.lastActivity > ROOM_TTL_MS) { rooms.delete(room.code); markDirty(); }
   }
 }, 20000);
 
-server.listen(PORT, HOST, () => {
-  console.log(`UNO-сервер запущен: http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+/* ---------- сохранение и восстановление ---------- */
+
+const SAVE_DELAY_MS = 4000;
+let dirty = false;
+let saveTimer = null;
+let saving = Promise.resolve();
+
+function serialize() {
+  const out = [];
+  for (const r of rooms.values()) {
+    const { clients, botTimer, catchTimer, ...rest } = r;
+    rest.players = r.players.map(({ conns, disconnectedAt, ...p }) => p);
+    out.push(rest);
+  }
+  return JSON.stringify({ v: 1, savedAt: Date.now(), rooms: out });
+}
+
+function restore(json) {
+  const data = JSON.parse(json);
+  const now = Date.now();
+  for (const r of data.rooms || []) {
+    r.clients = new Set();
+    r.botTimer = null;
+    r.catchTimer = null;
+    r.settings = Object.assign({ roundMinutes: ROUND_MINUTES, target: TARGET_SCORE }, r.settings);
+    r.history = r.history || [];
+    r.players.forEach((p) => { p.conns = 0; p.disconnectedAt = now; });
+    if (r.phase === 'playing') r.turnStartedAt = now;
+    if (now - (r.lastActivity || 0) > ROOM_TTL_MS) continue;
+    rooms.set(r.code, r);
+  }
+}
+
+async function upstash(cmd) {
+  const res = await fetch(UPSTASH_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${UPSTASH_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cmd),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error || `Upstash HTTP ${res.status}`);
+  return data.result;
+}
+
+async function writeState() {
+  const json = serialize();
+  if (UPSTASH_URL && UPSTASH_TOKEN) {
+    await upstash(['SET', UPSTASH_KEY, json]);
+  } else {
+    await fs.promises.mkdir(path.dirname(DATA_FILE), { recursive: true });
+    const tmp = DATA_FILE + '.tmp';
+    await fs.promises.writeFile(tmp, json);
+    await fs.promises.rename(tmp, DATA_FILE);
+  }
+}
+
+function markDirty() {
+  dirty = true;
+  if (saveTimer) return;
+  saveTimer = setTimeout(flush, SAVE_DELAY_MS);
+}
+
+function flush() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (!dirty) return saving;
+  dirty = false;
+  saving = saving.then(writeState).catch((e) => { console.error('Не удалось сохранить игры:', e.message); dirty = true; });
+  return saving;
+}
+
+async function loadState() {
+  try {
+    let json = null;
+    if (UPSTASH_URL && UPSTASH_TOKEN) {
+      json = await upstash(['GET', UPSTASH_KEY]);
+      console.log('Хранилище: Upstash Redis');
+    } else {
+      json = await fs.promises.readFile(DATA_FILE, 'utf8').catch(() => null);
+      console.log('Хранилище: файл ' + DATA_FILE);
+    }
+    if (json) restore(json);
+    console.log(`Восстановлено комнат: ${rooms.size}`);
+  } catch (e) {
+    console.error('Не удалось загрузить сохранённые игры:', e.message);
+  }
+}
+
+// Render и pm2 перед остановкой присылают SIGTERM — успеваем сохранить
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, async () => {
+    dirty = true;
+    const timeout = new Promise((r) => setTimeout(r, 8000));
+    await Promise.race([flush(), timeout]);
+    process.exit(0);
+  });
+}
+
+loadState().then(() => {
+  server.listen(PORT, HOST, () => {
+    console.log(`UNO-сервер запущен: http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  });
 });

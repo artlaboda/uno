@@ -89,7 +89,30 @@ window.UnoFX = (() => {
       [262, 330, 392].forEach((f) => tone(f, 1.1, { type: 'sine', vol: 0.1, delay: 0.65 }));
     },
     join() { tone(660, 0.12, { vol: 0.15 }); tone(990, 0.18, { vol: 0.12, delay: 0.08 }); },
+    whoosh() { noise(0.28, { freq: 500, to: 2600, q: 0.6, vol: 0.18 }); },
+    thud() { tone(140, 0.12, { to: 70, vol: 0.35 }); noise(0.06, { freq: 1800, q: 0.7, vol: 0.4 }); },
+    tick(hard) { tone(hard ? 1400 : 1000, 0.05, { type: 'square', vol: hard ? 0.14 : 0.08 }); },
+    timeup() {
+      for (let i = 0; i < 6; i++) { tone(1320, 0.08, { type: 'square', vol: 0.14, delay: i * 0.12 }); }
+      tone(220, 0.6, { type: 'sawtooth', vol: 0.12, delay: 0.75 });
+    },
   };
+
+  /* ================= СТОПКА СБРОСА ================= */
+  // Положение карты в стопке вычисляется из её id — у всех игроков стопка выглядит одинаково
+  function hash(str, seed) {
+    let h = 2166136261 ^ seed;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    h ^= h >>> 13; h = Math.imul(h, 0x5bd1e995); h ^= h >>> 15;
+    return (h >>> 0) / 4294967295;
+  }
+  function pileTransform(id) {
+    return {
+      r: Math.round((hash(id, 1) * 2 - 1) * 32),
+      x: Math.round((hash(id, 2) * 2 - 1) * 12),
+      y: Math.round((hash(id, 3) * 2 - 1) * 9),
+    };
+  }
 
   /* ================= АНИМАЦИИ ================= */
   function ensureLayer() {
@@ -130,6 +153,89 @@ window.UnoFX = (() => {
       { transform: `translate(${b.x - w / 2}px, ${b.y - h / 2}px) rotate(${rot}deg) scale(${s1})`, opacity: o.fadeOut ? 0 : 1 },
     ], { duration: o.duration || 420, delay: o.delay || 0, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'both' });
     return anim.finished.then(() => wrap.remove(), () => wrap.remove());
+  }
+
+  // Бросок карты в стопку: каждый раз своя траектория, вращение и переворот
+  function throwCard(card, chosen, fromRect, pileEl, o = {}) {
+    ensureLayer();
+    const pileRect = pileEl.getBoundingClientRect();
+    const W = pileRect.width, H = pileRect.height;
+    const wrap = document.createElement('div');
+    wrap.className = 'fx-fly fx-throw';
+    wrap.style.width = W + 'px'; wrap.style.height = H + 'px';
+    const inner = document.createElement('div'); inner.className = 'fx-3d';
+    const front = makeCard(card, { chosen }); front.classList.add('pile-card', 'face');
+    const back = backCard(); back.classList.add('pile-card', 'rear');
+    inner.append(front, back);
+    wrap.append(inner);
+    layer.append(wrap);
+
+    const R = Math.random;
+    const pick = (arr) => arr[Math.floor(R() * arr.length)];
+    const style = o.faceDown ? pick(['flip', 'flip', 'arc', 'spin']) : pick(['arc', 'flick', 'spin', 'lob', 'flip']);
+    const t = pileTransform(card.id);
+    const a = { x: fromRect.left + fromRect.width / 2, y: fromRect.top + fromRect.height / 2 };
+    const b = { x: pileRect.left + W / 2 + t.x, y: pileRect.top + H / 2 + t.y };
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const nx = -dy / dist, ny = dx / dist;                       // перпендикуляр к линии броска
+    const side = R() < 0.5 ? -1 : 1;
+    const bend = { arc: 0.35, flick: 0.12, spin: 0.25, lob: 0.15, flip: 0.3 }[style] * dist * (0.6 + R() * 0.8) * side;
+    const lift = { arc: 60, flick: 10, spin: 40, lob: 160, flip: 90 }[style] * (0.7 + R() * 0.6);
+    const c = { x: (a.x + b.x) / 2 + nx * bend, y: (a.y + b.y) / 2 + ny * bend - lift };
+
+    const s0 = Math.max(0.35, Math.min(1.2, fromRect.width / W));
+    const peak = { arc: 1.25, flick: 1.08, spin: 1.2, lob: 1.45, flip: 1.3 }[style];
+    const r0 = (R() * 2 - 1) * 25;
+    const spins = { arc: pick([0, 0, 1]), flick: pick([0, 1, -1]), spin: pick([1, -1, 2, -2]), lob: pick([0, 1]), flip: 0 }[style];
+    const r1 = t.r + spins * 360;
+    const ry0 = o.faceDown ? 180 : (style === 'flip' ? -360 : 0);  // карта соперника летит рубашкой и переворачивается
+    const rx = style === 'lob' ? 35 : (style === 'flick' ? 0 : 18);
+    const dur = { arc: 560, flick: 380, spin: 600, lob: 720, flip: 640 }[style] * (0.85 + R() * 0.3);
+
+    const N = 16, frames = [], ff = [], bf = [];
+    for (let i = 0; i <= N; i++) {
+      const k = i / N, m = 1 - k;
+      const x = m * m * a.x + 2 * m * k * c.x + k * k * b.x;
+      const y = m * m * a.y + 2 * m * k * c.y + k * k * b.y;
+      const bump = Math.sin(Math.PI * k);
+      const sc = s0 + (1 - s0) * k + (peak - 1) * bump;
+      const rz = r0 + (r1 - r0) * k;
+      const ry = ry0 * (1 - Math.min(1, k * 1.5));
+      const rxx = rx * bump;
+      frames.push({
+        offset: k,
+        transform: `translate(${x - W / 2}px, ${y - H / 2}px) perspective(900px) rotateZ(${rz}deg) rotateY(${ry}deg) rotateX(${rxx}deg) scale(${sc})`,
+        filter: `drop-shadow(0 ${8 + 30 * bump}px ${10 + 18 * bump}px rgba(0,0,0,${0.35 + 0.15 * bump}))`,
+      });
+      // какая сторона карты видна при данном повороте
+      const faceUp = Math.cos(ry * Math.PI / 180) >= 0;
+      ff.push({ offset: k, opacity: faceUp ? 1 : 0 });
+      bf.push({ offset: k, opacity: faceUp ? 0 : 1 });
+    }
+    const ease = { arc: 'cubic-bezier(.25,.6,.3,1)', flick: 'cubic-bezier(.1,.8,.2,1)', spin: 'cubic-bezier(.3,.5,.25,1)', lob: 'cubic-bezier(.35,.2,.3,1)', flip: 'cubic-bezier(.3,.6,.3,1)' }[style];
+    sfx.whoosh();
+    const timing = { duration: dur, easing: ease, fill: 'both' };
+    front.animate(ff, timing);
+    back.animate(bf, timing);
+    return wrap.animate(frames, timing)
+      .finished.then(() => wrap.remove(), () => wrap.remove());
+  }
+
+  // Карта «впечатывается» в стопку
+  function land(pileEl) {
+    const top = pileEl.querySelector('.pile-card:last-child');
+    if (top) {
+      const base = top.style.transform || '';
+      top.style.visibility = '';
+      top.animate([
+        { transform: base + ' scale(1.14)', filter: 'brightness(1.25)' },
+        { transform: base + ' scale(.97)', offset: 0.55 },
+        { transform: base + ' scale(1)', filter: 'brightness(1)' },
+      ], { duration: 260, easing: 'ease-out' });
+    }
+    pileEl.animate([{ transform: 'translateY(0)' }, { transform: 'translateY(3px)' }, { transform: 'translateY(0)' }], { duration: 180 });
+    sfx.thud();
   }
 
   // Крупная надпись по центру экрана
@@ -250,17 +356,15 @@ window.UnoFX = (() => {
       switch (e.fx) {
         case 'play': {
           const start = t;
-          const discCard = ctx.discardEl.querySelector('.card');
-          const isTop = discCard && e.card && ctx.topId === e.card.id;
-          if (isTop) discCard.style.opacity = '0';
+          const isTop = e.card && ctx.topId === e.card.id;
+          const topEl = isTop ? ctx.discardEl.querySelector('.pile-card:last-child') : null;
+          if (topEl) topEl.style.visibility = 'hidden';
+          let flightMs = 600;
           at(start, () => {
-            const from = e.by === ctx.me && ctx.playRect ? ctx.playRect : ctx.rectOf(e.by);
-            const el = makeCard(e.card, { chosen: e.color });
-            const to = ctx.discardEl.getBoundingClientRect();
-            fly(el, from, to, { duration: 430, fit: true, fromScale: e.by === ctx.me ? 1 : 0.6 }).then(() => {
-              const dc = ctx.discardEl.querySelector('.card');
-              if (dc) { dc.style.opacity = ''; dc.classList.remove('pop'); void dc.offsetWidth; dc.classList.add('pop'); }
-              sfx.flick();
+            const mine = e.by === ctx.me;
+            const from = mine && ctx.playRect ? ctx.playRect : ctx.rectOf(e.by);
+            throwCard(e.card, e.color, from, ctx.discardEl, { faceDown: !mine }).then(() => {
+              if (topEl) land(ctx.discardEl);
               const col = e.color ? COLORS[e.color] : COLORS[e.card.color];
               switch (e.card.value) {
                 case 'skip': splash('⊘', col, 'ПРОПУСК ХОДА'); sfx.skip(); break;
@@ -272,7 +376,7 @@ window.UnoFX = (() => {
               }
             });
           });
-          t += /^\d$/.test(e.card.value) ? 450 : 750;
+          t += /^\d$/.test(e.card.value) ? flightMs + 50 : flightMs + 350;
           break;
         }
         case 'draw': {
@@ -342,6 +446,10 @@ window.UnoFX = (() => {
           t += k * 55 + 400;
           break;
         }
+        case 'timeup':
+          at(t, () => { splash('⏰', '#ffffff', 'ВРЕМЯ ВЫШЛО'); sfx.timeup(); shake(document.body, true); });
+          t += 900;
+          break;
         case 'win':
           at(t, () => {
             confetti(e.game ? 5000 : 3500);
@@ -365,6 +473,7 @@ window.UnoFX = (() => {
 
   return {
     setCardFactory(fn) { makeCard = fn; },
+    pileTransform,
     process,
     sfx,
     splash,

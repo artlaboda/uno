@@ -11,7 +11,9 @@
   let es = null;        // EventSource
   let pendingWildId = null;
   let prevHandIds = new Set();
-  let prevTopId = null;
+  let clockOffset = 0;   // разница часов сервера и браузера
+  const ROUND_OPTIONS = [0, 3, 5, 10, 15, 20];
+  const TARGET_OPTIONS = [100, 200, 300, 500];
   let prevTurnMine = false;
   let lastLogId = 0;
   let lastFxId = null;   // последний обработанный эффект (null — ещё не инициализировано)
@@ -115,8 +117,34 @@
 
   $('createBtn').onclick = async () => {
     const name = getName(); if (!name) return;
-    try { enterRoom(await api('create', { name }), name); } catch (e) { toast(e.message); }
+    try { enterRoom(await api('create', Object.assign({ name }, homeSettings)), name); } catch (e) { toast(e.message); }
   };
+
+  /* ---------- настройки партии ---------- */
+  const roundLabel = (m) => (m ? String(m) : '∞');
+  function chipRow(el, options, value, label, onPick, readonly) {
+    el.innerHTML = '';
+    options.forEach((v) => {
+      const b = document.createElement('button');
+      b.className = 'chip' + (v === value ? ' on' : '');
+      b.textContent = label(v);
+      b.disabled = !!readonly && v !== value;
+      if (readonly) b.classList.add('ro');
+      b.onclick = () => { if (!readonly && v !== value) onPick(v); };
+      el.append(b);
+    });
+  }
+  let homeSettings = { roundMinutes: 10, target: 500 };
+  try { homeSettings = Object.assign(homeSettings, JSON.parse(localStorage.getItem('uno-settings') || '{}')); } catch (e) { /* ignore */ }
+  function renderHomeSettings() {
+    chipRow($('homeRound'), ROUND_OPTIONS, homeSettings.roundMinutes, roundLabel, (v) => { homeSettings.roundMinutes = v; saveHome(); });
+    chipRow($('homeTarget'), TARGET_OPTIONS, homeSettings.target, String, (v) => { homeSettings.target = v; saveHome(); });
+  }
+  function saveHome() {
+    try { localStorage.setItem('uno-settings', JSON.stringify(homeSettings)); } catch (e) { /* ignore */ }
+    renderHomeSettings();
+  }
+  renderHomeSettings();
 
   let botCount = 2;
   try { botCount = Number(localStorage.getItem('uno-bots')) || 2; } catch (e) { /* ignore */ }
@@ -132,7 +160,7 @@
 
   $('soloBtn').onclick = async () => {
     const name = getName(); if (!name) return;
-    try { enterRoom(await api('create', { name, bots: botCount }), name); } catch (e) { toast(e.message); }
+    try { enterRoom(await api('create', Object.assign({ name, bots: botCount }, homeSettings)), name); } catch (e) { toast(e.message); }
   };
 
   $('joinBtn').onclick = async () => {
@@ -261,6 +289,7 @@
     if (nv.log.length) lastFxId = Math.max(lastFxId || 0, nv.log[nv.log.length - 1].id);
     const wasMine = prevTurnMine;
     const prevCount = prevPlayerCount;
+    if (nv.serverNow) clockOffset = nv.serverNow - Date.now();
     view = nv;
     render();
     const myTurn = view.phase === 'playing' && view.turnId === view.me;
@@ -370,6 +399,9 @@
     $('lobbyWait').classList.toggle('hidden', isHost);
     $('startBtn').disabled = view.players.length < view.limits.min;
     $('startBtn').textContent = view.players.length < view.limits.min ? 'Ждём игроков…' : 'Начать игру';
+    const st = view.settings || { roundMinutes: 0, target: view.target };
+    chipRow($('lobbyRound'), view.options.roundMinutes, st.roundMinutes, roundLabel, (v) => act('settings', { roundMinutes: v }), !isHost);
+    chipRow($('lobbyTarget'), view.options.target, st.target, String, (v) => act('settings', { target: v }), !isHost);
   }
 
   function renderGame() {
@@ -420,12 +452,17 @@
     deck.classList.toggle('can-draw', canDraw());
     $('deckCount').textContent = `в колоде ${view.deckCount}`;
     const disc = $('discard'); disc.innerHTML = '';
-    if (view.top) {
-      const tc = makeCard(view.top, { chosen: view.currentColor });
-      if (view.top.id !== prevTopId) tc.classList.add('pop');
-      prevTopId = view.top.id;
-      disc.append(tc);
-    }
+    const pile = view.pile && view.pile.length ? view.pile : (view.top ? [view.top] : []);
+    pile.forEach((c, i) => {
+      const isTop = i === pile.length - 1;
+      const el = makeCard(c, { chosen: isTop ? view.currentColor : null });
+      el.classList.add('pile-card');
+      const t = UnoFX.pileTransform(c.id);
+      el.style.transform = `translate(${t.x}px, ${t.y}px) rotate(${t.r}deg)`;
+      const depth = pile.length - 1 - i;
+      if (depth) el.style.filter = `brightness(${Math.max(0.55, 1 - depth * 0.06)})`;
+      disc.append(el);
+    });
     const badge = $('colorBadge');
     if (view.currentColor) {
       badge.textContent = 'цвет: ' + COLOR_NAMES[view.currentColor];
@@ -498,9 +535,18 @@
       $('roundTitle').textContent = `🏆 ${lr.winnerName} побеждает в игре!`;
       $('roundSubtitle').textContent = `Набрано ${winner ? winner.score : ''} очков (цель — ${view.target}).`;
     } else {
-      $('roundTitle').textContent = `${lr.winnerName} выигрывает раунд!`;
-      $('roundSubtitle').textContent = `+${lr.points} ${plural(lr.points, 'очко', 'очка', 'очков')} за карты соперников. Партия идёт до ${view.target}.`;
+      $('roundTitle').textContent = (lr.reason === 'time' ? '⏰ ' : '') + `${lr.winnerName} выигрывает раунд!`;
+      $('roundSubtitle').textContent = (lr.reason === 'time' ? 'Время вышло — у него меньше всего очков на руке. ' : '')
+        + `+${lr.points} ${plural(lr.points, 'очко', 'очка', 'очков')} за карты соперников. Партия идёт до ${view.target}.`;
     }
+    const hist = view.history || [];
+    $('historyBox').classList.toggle('hidden', !hist.length);
+    const hl = $('historyList'); hl.innerHTML = '';
+    hist.slice().reverse().forEach((h) => {
+      const li = document.createElement('li');
+      li.textContent = `Раунд ${h.round}: ${h.winnerName} +${h.points} · ${fmtTime(h.durationSec)}` + (h.reason === 'time' ? ' · ⏰ по времени' : '');
+      hl.append(li);
+    });
     const tb = $('scoreBody'); tb.innerHTML = '';
     const rows = view.players.map((p) => ({ p, h: lr.hands.find((h) => h.id === p.id) }))
       .sort((a, b) => b.p.score - a.p.score);
@@ -523,6 +569,24 @@
     $('nextRoundBtn').disabled = view.players.length < view.limits.min;
     $('roundWait').classList.toggle('hidden', isHost);
   }
+
+  /* ---------- таймер раунда ---------- */
+  function fmtTime(sec) {
+    sec = Math.max(0, Math.round(sec));
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  }
+  let lastTickSec = null;
+  setInterval(() => {
+    const el = $('roundTimer');
+    if (!view || view.phase !== 'playing' || !view.roundEndsAt) { el.classList.add('hidden'); return; }
+    const left = (view.roundEndsAt - (Date.now() + clockOffset)) / 1000;
+    el.classList.remove('hidden');
+    el.textContent = '⏱ ' + fmtTime(Math.ceil(left));
+    el.classList.toggle('warn', left <= 60);
+    el.classList.toggle('crit', left <= 15);
+    const s = Math.ceil(left);
+    if (s <= 10 && s > 0 && s !== lastTickSec) { lastTickSec = s; UnoFX.sfx.tick(s <= 3); }
+  }, 250);
 
   /* ---------- мелочи ---------- */
   function plural(n, one, few, many) {
