@@ -369,8 +369,14 @@ window.UnoFX = (() => {
               switch (e.card.value) {
                 case 'skip': splash('⊘', col, 'ПРОПУСК ХОДА'); sfx.skip(); break;
                 case 'reverse': splash('⇄', col, 'РАЗВОРОТ'); sfx.reverse(); break;
-                case 'draw2': splash('+2', col); sfx.plus2(); shake(document.body); break;
-                case 'wild4': splash('+4', col, COLOR_NAMES[e.color]); sfx.plus4(); wave(col); shake(document.body, true); break;
+                case 'draw2':
+                  splash(e.stack ? `+${e.stack}` : '+2', col, e.stacked ? 'ПЕРЕВОД!' : null);
+                  sfx.plus2(); if (e.stacked) sfx.plus2(); shake(document.body, !!e.stacked);
+                  break;
+                case 'wild4':
+                  splash(e.stack ? `+${e.stack}` : '+4', col, (e.stacked ? 'ПЕРЕВОД! ' : '') + COLOR_NAMES[e.color]);
+                  sfx.plus4(); wave(col); shake(document.body, true);
+                  break;
                 case 'wild': splash('★', col, COLOR_NAMES[e.color]); sfx.wild(); wave(col); break;
                 default: break;
               }
@@ -398,6 +404,14 @@ window.UnoFX = (() => {
           t += n * 130 + 300;
           break;
         }
+        case 'stack':
+          at(t, () => {
+            shout(ctx.rectOf(e.target), `+${e.n}?`, 'bad');
+            shake(ctx.boxOf(e.target));
+            if (e.target === ctx.me && navigator.vibrate) { try { navigator.vibrate([40, 30, 40]); } catch (err) { /* ignore */ } }
+          });
+          t += 250;
+          break;
         case 'skip':
           at(t, () => { shout(ctx.rectOf(e.target), '⊘', 'bad'); shake(ctx.boxOf(e.target)); });
           t += 250;

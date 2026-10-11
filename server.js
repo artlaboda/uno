@@ -112,7 +112,8 @@ function createRoom() {
     logSeq: 0,
     clients: new Set(),
     lastActivity: Date.now(),
-    settings: { roundMinutes: ROUND_MINUTES, target: TARGET_SCORE },
+    settings: { roundMinutes: ROUND_MINUTES, target: TARGET_SCORE, stacking: true },
+    pending: null,           // накопленный штраф при переводе: { type: 'draw2'|'wild4', count }
     roundStartedAt: null,
     roundEndsAt: null,
     history: [],
@@ -133,6 +134,7 @@ function applySettings(room, body) {
     if (!TARGET_OPTIONS.includes(t)) fail('Недопустимая цель партии');
     st.target = t;
   }
+  if (body.stacking !== undefined) st.stacking = body.stacking === true || body.stacking === 'true' || body.stacking === 1;
 }
 
 function addPlayer(room, name) {
@@ -207,6 +209,7 @@ function drawCards(room, player, n) {
 }
 
 function isPlayable(room, player, card) {
+  if (room.pending) return card.value === room.pending.type; // перевод: +2 на +2, +4 на +4
   if (room.drawnCardId && card.id !== room.drawnCardId) return false;
   if (card.value === 'wild') return true;
   // «Закажи цвет +4» — только если на руке нет карт текущего цвета (официальное правило)
@@ -238,6 +241,7 @@ function startRound(room) {
     first = room.deck.pop();
   }
   room.discard.push(first);
+  room.pending = null;
   room.currentColor = first.color;
   room.phase = 'playing';
   room.roundStartedAt = Date.now();
@@ -263,14 +267,34 @@ function playCard(room, player, cardId, chosenColor) {
   room.discard.push(card);
   room.currentColor = isWild ? chosenColor : card.color;
   room.drawnCardId = null;
-  log(room, `${player.name} кладёт`, { card, color: isWild ? chosenColor : null, fx: 'play', by: player.id, last: player.hand.length });
 
   const n = room.players.length;
   const victimIdx = nextIndex(room, room.turn, 1);
   const victim = room.players[victimIdx];
+  const isDraw = card.value === 'draw2' || card.value === 'wild4';
+  const k = card.value === 'draw2' ? 2 : 4;
+  const stackTotal = isDraw && room.settings.stacking ? (room.pending ? room.pending.count : 0) + k : 0;
+  log(room, `${player.name} ${room.pending ? 'переводит' : 'кладёт'}`, {
+    card, color: isWild ? chosenColor : null, fx: 'play', by: player.id, last: player.hand.length,
+    stack: stackTotal || undefined, stacked: !!room.pending,
+  });
 
-  if (card.value === 'draw2' || card.value === 'wild4') {
-    const k = card.value === 'draw2' ? 2 : 4;
+  if (isDraw && room.settings.stacking) {
+    // Перевод: штраф копится и уходит следующему, тот может перевести дальше
+    room.pending = { type: card.value, count: stackTotal };
+    if (player.hand.length === 0) {
+      const total = room.pending.count;
+      room.pending = null;
+      drawCards(room, victim, total);
+      log(room, `${victim.name} берёт ${total} ${cardsWord(total)}`, { fx: 'draw', target: victim.id, n: total, penalty: true });
+      return endRound(room, player);
+    }
+    log(room, `${victim.name}: +${stackTotal} — перевести или взять`, { fx: 'stack', target: victim.id, n: stackTotal, kind: card.value });
+    advance(room, 1);
+    return;
+  }
+
+  if (isDraw) {
     drawCards(room, victim, k);
     log(room, `${victim.name} берёт ${k} карты и пропускает ход`, { fx: 'draw', target: victim.id, n: k, penalty: true });
   }
@@ -296,6 +320,13 @@ function playCard(room, player, cardId, chosenColor) {
   }
 }
 
+function cardsWord(n) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return 'карту';
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return 'карты';
+  return 'карт';
+}
+
 const handPoints = (p) => p.hand.reduce((s, c) => s + cardPoints(c), 0);
 
 // reason: 'out' — игрок избавился от карт, 'time' — вышло время раунда
@@ -309,6 +340,7 @@ function endRound(room, winner, reason = 'out') {
   winner.score += points;
   room.phase = 'roundOver';
   room.drawnCardId = null;
+  room.pending = null;
   room.gameOver = winner.score >= room.settings.target;
   const durationSec = Math.round((Date.now() - (room.roundStartedAt || Date.now())) / 1000);
   room.lastRound = { winnerId: winner.id, winnerName: winner.name, points, hands, reason, durationSec };
@@ -395,6 +427,7 @@ function viewFor(room, player) {
     deckCount: room.deck.length,
     discardCount: room.discard.length,
     drawnCardId: myTurn ? room.drawnCardId : null,
+    pending: room.pending,
     canUno: playing && !player.saidUno && (player.hand.length === 1 || (myTurn && player.hand.length === 2)),
     roundNo: room.roundNo,
     lastRound: room.lastRound,
@@ -422,7 +455,16 @@ function broadcast(room) {
 
 /* ---------- общие действия (для людей и компьютера) ---------- */
 
+function takePending(room, player) {
+  const total = room.pending.count;
+  room.pending = null;
+  drawCards(room, player, total);
+  log(room, `${player.name} берёт ${total} ${cardsWord(total)} и пропускает ход`, { fx: 'draw', target: player.id, n: total, penalty: true });
+  advance(room, 1);
+}
+
 function doDraw(room, player) {
+  if (room.pending) { takePending(room, player); return; }
   if (room.drawnCardId) fail('Вы уже взяли карту — сыграйте её или пасуйте');
   const [card] = drawCards(room, player, 1);
   if (!card) { log(room, `${player.name} пропускает ход (колода пуста)`); advance(room, 1); return; }
@@ -436,6 +478,7 @@ function doDraw(room, player) {
 }
 
 function doPass(room, player) {
+  if (room.pending) { takePending(room, player); return; }
   if (!room.drawnCardId) fail('Сначала возьмите карту из колоды');
   log(room, `${player.name} пасует`);
   advance(room, 1);
@@ -523,6 +566,15 @@ function botPick(room, bot, playable) {
 }
 
 function botMove(room, bot) {
+  if (room.pending) {
+    const st = bot.hand.filter((c) => isPlayable(room, bot, c));
+    if (st.length && Math.random() < 0.92) {
+      const card = st[0];
+      if (bot.hand.length === 2 && Math.random() < BOT_UNO_CHANCE) doUno(room, bot);
+      playCard(room, bot, card.id, card.color === 'wild' ? botColor(bot, card) : undefined);
+    } else takePending(room, bot);
+    return;
+  }
   if (room.drawnCardId) {
     const card = bot.hand.find((c) => c.id === room.drawnCardId);
     if (card && (Math.random() < 0.85 || bot.hand.length <= 3)) {
@@ -635,7 +687,7 @@ function handleApi(name, body) {
         if (!isHost) fail('Настройки меняет создатель комнаты');
         if (room.phase === 'playing') fail('Настройки можно менять между раундами');
         applySettings(room, body);
-        log(room, `Настройки: раунд — ${room.settings.roundMinutes ? room.settings.roundMinutes + ' мин' : 'без ограничения'}, партия до ${room.settings.target} очков`);
+        log(room, `Настройки: раунд — ${room.settings.roundMinutes ? room.settings.roundMinutes + ' мин' : 'без ограничения'}, партия до ${room.settings.target} очков, перевод +2/+4 — ${room.settings.stacking ? 'да' : 'нет'}`);
         if (room.phase === 'roundOver') {
           const leader = Math.max(...room.players.map((p) => p.score));
           room.gameOver = leader >= room.settings.target;
@@ -776,9 +828,14 @@ setInterval(() => {
     if (!humans(room).some((p) => p.conns > 0)) continue; // все офлайн — ждём
     const since = Math.max(cur.disconnectedAt || 0, room.turnStartedAt);
     if (now - since < AFK_SECONDS * 1000) continue;
-    if (!room.drawnCardId) drawCards(room, cur, 1);
-    log(room, `${cur.name} не в сети — автоматически берёт карту и пропускает ход`, { fx: 'draw', target: cur.id, n: room.drawnCardId ? 0 : 1 });
-    advance(room, 1);
+    if (room.pending) {
+      log(room, `${cur.name} не в сети`);
+      takePending(room, cur);
+    } else {
+      if (!room.drawnCardId) drawCards(room, cur, 1);
+      log(room, `${cur.name} не в сети — автоматически берёт карту и пропускает ход`, { fx: 'draw', target: cur.id, n: room.drawnCardId ? 0 : 1 });
+      advance(room, 1);
+    }
     broadcast(room);
   }
 }, 1000);
@@ -816,7 +873,7 @@ function restore(json) {
     r.clients = new Set();
     r.botTimer = null;
     r.catchTimer = null;
-    r.settings = Object.assign({ roundMinutes: ROUND_MINUTES, target: TARGET_SCORE }, r.settings);
+    r.settings = Object.assign({ roundMinutes: ROUND_MINUTES, target: TARGET_SCORE, stacking: true }, r.settings);
     r.history = r.history || [];
     r.players.forEach((p) => { p.conns = 0; p.disconnectedAt = now; });
     if (r.phase === 'playing') r.turnStartedAt = now;

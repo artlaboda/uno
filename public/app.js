@@ -134,11 +134,13 @@
       el.append(b);
     });
   }
-  let homeSettings = { roundMinutes: 10, target: 500 };
+  let homeSettings = { roundMinutes: 10, target: 500, stacking: true };
+  const yesNo = (v) => (v ? 'Да' : 'Нет');
   try { homeSettings = Object.assign(homeSettings, JSON.parse(localStorage.getItem('uno-settings') || '{}')); } catch (e) { /* ignore */ }
   function renderHomeSettings() {
     chipRow($('homeRound'), ROUND_OPTIONS, homeSettings.roundMinutes, roundLabel, (v) => { homeSettings.roundMinutes = v; saveHome(); });
     chipRow($('homeTarget'), TARGET_OPTIONS, homeSettings.target, String, (v) => { homeSettings.target = v; saveHome(); });
+    chipRow($('homeStack'), [true, false], homeSettings.stacking !== false, yesNo, (v) => { homeSettings.stacking = v; saveHome(); });
   }
   function saveHome() {
     try { localStorage.setItem('uno-settings', JSON.stringify(homeSettings)); } catch (e) { /* ignore */ }
@@ -402,6 +404,7 @@
     const st = view.settings || { roundMinutes: 0, target: view.target };
     chipRow($('lobbyRound'), view.options.roundMinutes, st.roundMinutes, roundLabel, (v) => act('settings', { roundMinutes: v }), !isHost);
     chipRow($('lobbyTarget'), view.options.target, st.target, String, (v) => act('settings', { target: v }), !isHost);
+    chipRow($('lobbyStack'), [true, false], st.stacking !== false, yesNo, (v) => act('settings', { stacking: v }), !isHost);
   }
 
   function renderGame() {
@@ -471,21 +474,36 @@
     $('dirIndicator').classList.toggle('ccw', view.direction < 0);
     if (view.currentColor) $('table').style.setProperty('--glow', `var(--${view.currentColor})`);
 
+    // Накопленный штраф (перевод +2/+4)
+    const pend = view.phase === 'playing' ? view.pending : null;
+    const pendName = pend ? (pend.type === 'draw2' ? '«+2»' : '«+4»') : '';
+    const sb = $('stackBadge');
+    sb.classList.toggle('hidden', !pend);
+    if (pend) sb.textContent = `+${pend.count} копится`;
+
     // Статус
     const st = $('status');
     st.classList.toggle('mine', myTurn);
     if (view.phase !== 'playing') st.textContent = 'Раунд окончен';
+    else if (myTurn && pend) {
+      st.textContent = view.playable.length
+        ? `На вас +${pend.count}! Переведите картой ${pendName} или возьмите ${pend.count} ${plural(pend.count, 'карту', 'карты', 'карт')}`
+        : `На вас +${pend.count} — перевести нечем, берите ${pend.count} ${plural(pend.count, 'карту', 'карты', 'карт')}`;
+    }
     else if (myTurn) st.textContent = view.drawnCardId ? 'Взятую карту можно сыграть — или нажмите «Пас»' : 'Ваш ход';
     else {
       const cur = view.players.find((p) => p.id === view.turnId);
-      st.textContent = cur ? `Ходит ${cur.name}` + (cur.online ? '' : ` (не в сети — авто-пропуск через ${view.afkSeconds} с)`) : '';
+      st.textContent = cur ? (pend ? `${cur.name}: +${pend.count} — переведёт или возьмёт?` : `Ходит ${cur.name}`)
+        + (cur.online ? '' : ` (не в сети — авто-ход через ${view.afkSeconds} с)`) : '';
     }
 
     // Я
     $('meName').textContent = me.name;
     $('meScore').textContent = `${me.score} оч. из ${view.target}`;
-    $('drawBtn').classList.toggle('hidden', !myTurn || !!view.drawnCardId);
-    $('passBtn').classList.toggle('hidden', !myTurn || !view.drawnCardId);
+    $('drawBtn').classList.toggle('hidden', !myTurn || (!!view.drawnCardId && !pend));
+    $('drawBtn').textContent = pend ? `Взять ${pend.count} ${plural(pend.count, 'карту', 'карты', 'карт')}` : 'Взять карту';
+    $('drawBtn').classList.toggle('btn-penalty', !!pend);
+    $('passBtn').classList.toggle('hidden', !myTurn || !view.drawnCardId || !!pend);
     $('unoBtn').classList.toggle('hidden', !view.canUno);
 
     const hand = $('hand'); hand.innerHTML = '';
