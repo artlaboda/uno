@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f3d2e">
+  <title>UNO онлайн</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="conn" class="conn hidden">Соединение потеряно — переподключаюсь…</div>
+
+  <!-- Стартовый экран -->
+  <section id="home" class="screen">
+    <div class="home-card">
+      <div class="logo"><span>U</span><span>N</span><span>O</span></div>
+      <p class="tagline">Карточная игра для 2–6 игроков. Каждый играет со своего устройства.</p>
+
+      <label class="field">
+        <span>Ваше имя</span>
+        <input id="nameInput" maxlength="20" autocomplete="nickname" placeholder="Например, Артём">
+      </label>
+
+      <button id="createBtn" class="btn btn-primary btn-wide">Создать комнату</button>
+
+      <div class="divider"><span>или войти по коду</span></div>
+
+      <div class="join-row">
+        <input id="codeInput" maxlength="5" placeholder="КОД" autocomplete="off" autocapitalize="characters">
+        <button id="joinBtn" class="btn">Войти</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Лобби -->
+  <section id="lobby" class="screen hidden">
+    <div class="lobby-card">
+      <div class="lobby-head">
+        <div>
+          <div class="muted small">Код комнаты</div>
+          <div id="lobbyCode" class="room-code">—</div>
+        </div>
+        <button id="copyLinkBtn" class="btn btn-small">Скопировать ссылку</button>
+      </div>
+      <p class="muted small">Отправьте друзьям код или ссылку — они откроют её в браузере и введут имя.</p>
+
+      <h3>Игроки <span id="lobbyCount" class="muted"></span></h3>
+      <ul id="lobbyPlayers" class="lobby-players"></ul>
+
+      <button id="startBtn" class="btn btn-primary btn-wide">Начать игру</button>
+      <p id="lobbyWait" class="muted center hidden">Ждём, когда создатель комнаты начнёт игру…</p>
+
+      <details class="rules">
+        <summary>Правила</summary>
+        <ul>
+          <li>Положите карту того же цвета, того же числа или того же знака, что и верхняя карта сброса. «Закажи цвет» можно класть всегда.</li>
+          <li><b>⊘ Пропуск</b> — следующий пропускает ход. <b>⇄ Разворот</b> — меняет направление. <b>+2</b> — следующий берёт 2 карты и пропускает ход.</li>
+          <li><b>+4</b> — вы выбираете цвет, следующий берёт 4 карты и пропускает ход. Класть можно, только если у вас нет карт текущего цвета.</li>
+          <li>Нечем или не хочется ходить — возьмите карту. Если она подходит, её можно сразу сыграть, иначе ход переходит дальше.</li>
+          <li>Когда остаётся одна карта — нажмите <b>UNO!</b> (можно заранее, держа 2 карты в свой ход). Не успели — любой может вас «поймать», и вы берёте 2 карты.</li>
+          <li>Избавился от карт — выиграл раунд и получает очки за карты соперников: цифры по номиналу, ⊘ ⇄ +2 — по 20, «Закажи цвет» и +4 — по 50. Партия идёт до 500 очков.</li>
+          <li>Если игрок отключился, через 30 секунд за него автоматически берётся карта и ход переходит дальше.</li>
+        </ul>
+      </details>
+
+      <button id="lobbyLeaveBtn" class="btn btn-ghost btn-wide">Выйти из комнаты</button>
+    </div>
+  </section>
+
+  <!-- Игра -->
+  <section id="game" class="screen hidden">
+    <header class="topbar">
+      <div class="small muted">Комната <b id="gameCode"></b> · раунд <b id="roundNo"></b></div>
+      <div class="topbar-actions">
+        <button id="logToggle" class="btn btn-small btn-ghost">Журнал</button>
+        <button id="gameLeaveBtn" class="btn btn-small btn-ghost">Выйти</button>
+      </div>
+    </header>
+
+    <div id="opponents" class="opponents"></div>
+
+    <div class="table">
+      <div class="pile">
+        <div id="deck" class="card back" title="Взять карту"><span class="back-label">UNO</span></div>
+        <div id="deckCount" class="pile-label muted small"></div>
+      </div>
+      <div class="pile">
+        <div id="discard"></div>
+        <div id="colorBadge" class="color-badge"></div>
+      </div>
+      <div id="dirIndicator" class="dir" title="Направление игры">↻</div>
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <div class="me-bar">
+      <div class="me-info"><span id="meName"></span> · <span id="meScore"></span></div>
+      <div class="me-actions">
+        <button id="drawBtn" class="btn">Взять карту</button>
+        <button id="passBtn" class="btn">Пас</button>
+        <button id="unoBtn" class="btn btn-uno">UNO!</button>
+      </div>
+    </div>
+
+    <div id="hand" class="hand"></div>
+
+    <aside id="logPanel" class="log-panel">
+      <div class="log-head"><b>Журнал</b><button id="logClose" class="btn btn-small btn-ghost">✕</button></div>
+      <ol id="log" class="log"></ol>
+    </aside>
+  </section>
+
+  <!-- Выбор цвета -->
+  <div id="colorPicker" class="overlay hidden">
+    <div class="modal">
+      <h3>Выберите цвет</h3>
+      <div class="color-grid">
+        <button data-color="red" class="swatch red">Красный</button>
+        <button data-color="yellow" class="swatch yellow">Жёлтый</button>
+        <button data-color="green" class="swatch green">Зелёный</button>
+        <button data-color="blue" class="swatch blue">Синий</button>
+      </div>
+      <button id="colorCancel" class="btn btn-ghost btn-wide">Отмена</button>
+    </div>
+  </div>
+
+  <!-- Итоги раунда -->
+  <div id="roundOver" class="overlay hidden">
+    <div class="modal modal-wide">
+      <h2 id="roundTitle"></h2>
+      <p id="roundSubtitle" class="muted"></p>
+      <table class="score-table">
+        <thead><tr><th>Игрок</th><th>Карты на руке</th><th>Очки в раунде</th><th>Всего</th></tr></thead>
+        <tbody id="scoreBody"></tbody>
+      </table>
+      <button id="nextRoundBtn" class="btn btn-primary btn-wide">Следующий раунд</button>
+      <p id="roundWait" class="muted center hidden">Ждём создателя комнаты…</p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

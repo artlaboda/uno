@@ -1,0 +1,9 @@
+{
+  "name": "uno-online",
+  "version": "1.0.0",
+  "description": "UNO для 2–6 игроков в браузере, подключение по коду комнаты",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=16" },
+  "license": "MIT"
+}
