@@ -14,20 +14,32 @@
   <section id="home" class="screen">
     <div class="home-card">
       <div class="logo"><span>U</span><span>N</span><span>O</span></div>
-      <p class="tagline">Карточная игра для 2–6 игроков. Каждый играет со своего устройства.</p>
+      <p class="tagline">Играйте с компьютером или с друзьями — каждый со своего устройства.</p>
 
       <label class="field">
         <span>Ваше имя</span>
         <input id="nameInput" maxlength="20" autocomplete="nickname" placeholder="Например, Артём">
       </label>
 
-      <button id="createBtn" class="btn btn-primary btn-wide">Создать комнату</button>
+      <div class="mode">
+        <div class="mode-title">🤖 С компьютером</div>
+        <div class="bot-count">
+          <span class="muted small">Соперников:</span>
+          <button class="chip" data-n="1">1</button>
+          <button class="chip on" data-n="2">2</button>
+          <button class="chip" data-n="3">3</button>
+        </div>
+        <button id="soloBtn" class="btn btn-primary btn-wide">Играть с компьютером</button>
+      </div>
 
-      <div class="divider"><span>или войти по коду</span></div>
-
-      <div class="join-row">
-        <input id="codeInput" maxlength="5" placeholder="КОД" autocomplete="off" autocapitalize="characters">
-        <button id="joinBtn" class="btn">Войти</button>
+      <div class="mode">
+        <div class="mode-title">👥 С друзьями</div>
+        <button id="createBtn" class="btn btn-wide">Создать комнату</button>
+        <div class="divider"><span>или войти по коду</span></div>
+        <div class="join-row">
+          <input id="codeInput" maxlength="5" placeholder="КОД" autocomplete="off" autocapitalize="characters">
+          <button id="joinBtn" class="btn">Войти</button>
+        </div>
       </div>
     </div>
   </section>
@@ -46,6 +58,7 @@
 
       <h3>Игроки <span id="lobbyCount" class="muted"></span></h3>
       <ul id="lobbyPlayers" class="lobby-players"></ul>
+      <button id="addBotBtn" class="btn btn-ghost btn-wide btn-dashed">🤖 Добавить компьютер</button>
 
       <button id="startBtn" class="btn btn-primary btn-wide">Начать игру</button>
       <p id="lobbyWait" class="muted center hidden">Ждём, когда создатель комнаты начнёт игру…</p>

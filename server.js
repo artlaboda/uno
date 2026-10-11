@@ -19,6 +19,9 @@ const HAND_SIZE = 7;
 const TARGET_SCORE = 500;          // до скольки очков идёт партия
 const AFK_SECONDS = 30;            // через сколько секунд за отключившегося игрока ход делается автоматически
 const ROOM_TTL_MS = 3 * 60 * 60 * 1000; // пустая комната удаляется через 3 часа без активности
+const BOT_NAMES = ['Вася', 'Маша', 'Гоша', 'Оля', 'Петя', 'Зина', 'Тоша', 'Лиза'];
+const BOT_DELAY_MS = [900, 1700];       // «раздумья» компьютера перед ходом
+const BOT_UNO_CHANCE = 0.85;            // как часто компьютер не забывает крикнуть UNO
 
 const COLORS = ['red', 'yellow', 'green', 'blue'];
 const COLOR_NAMES = { red: 'красный', yellow: 'жёлтый', green: 'зелёный', blue: 'синий' };
@@ -110,11 +113,26 @@ function addPlayer(room, name) {
     saidUno: false,
     conns: 0,
     disconnectedAt: Date.now(),
+    isBot: false,
   };
   room.players.push(player);
   if (!room.hostId) room.hostId = player.id;
   return player;
 }
+
+function addBot(room) {
+  if (room.players.length >= MAX_PLAYERS) fail(`Максимум ${MAX_PLAYERS} игроков`);
+  if (room.phase === 'playing') fail('Добавить компьютер можно между раундами');
+  const taken = new Set(room.players.map((p) => p.name));
+  const name = BOT_NAMES.find((n) => !taken.has(n)) || `Бот ${room.players.length + 1}`;
+  const bot = addPlayer(room, name);
+  bot.isBot = true;
+  bot.token = null;
+  log(room, `${name} 🤖 присоединяется`);
+  return bot;
+}
+
+const humans = (room) => room.players.filter((p) => !p.isBot);
 
 function log(room, text, extra = {}) {
   room.log.push({ id: ++room.logSeq, text, ...extra });
@@ -276,7 +294,7 @@ function removePlayer(room, player) {
       try { c.res.write('event: kicked\ndata: {}\n\n'); c.res.end(); } catch (e) { /* ignore */ }
     }
   }
-  if (room.hostId === player.id) room.hostId = room.players[0] ? room.players[0].id : null;
+  if (room.hostId === player.id) { const h = humans(room)[0]; room.hostId = h ? h.id : null; }
   log(room, `${player.name} покидает игру`);
 
   if (room.phase === 'playing') {
@@ -290,7 +308,7 @@ function removePlayer(room, player) {
       else room.turn = ni;               // ход у того же игрока, сдвинулся только индекс
     }
   }
-  if (!room.players.length) rooms.delete(room.code);
+  if (!humans(room).length) { clearBotTimers(room); rooms.delete(room.code); }
 }
 
 /* ---------- представление состояния для конкретного игрока ---------- */
@@ -308,7 +326,8 @@ function viewFor(room, player) {
       id: p.id,
       name: p.name,
       count: p.hand.length,
-      online: p.conns > 0,
+      online: p.isBot || p.conns > 0,
+      isBot: p.isBot,
       score: p.score,
       saidUno: p.saidUno,
       catchable: playing && p.hand.length === 1 && !p.saidUno,
@@ -337,6 +356,125 @@ function broadcast(room) {
   for (const c of room.clients) {
     try { c.res.write(`data: ${JSON.stringify(viewFor(room, c.player))}\n\n`); } catch (e) { /* ignore */ }
   }
+  scheduleBots(room);
+}
+
+/* ---------- общие действия (для людей и компьютера) ---------- */
+
+function doDraw(room, player) {
+  if (room.drawnCardId) fail('Вы уже взяли карту — сыграйте её или пасуйте');
+  const [card] = drawCards(room, player, 1);
+  if (!card) { log(room, `${player.name} пропускает ход (колода пуста)`); advance(room, 1); return; }
+  if (isPlayable(room, player, card)) {
+    room.drawnCardId = card.id;
+    log(room, `${player.name} берёт карту`, { fx: 'draw', target: player.id, n: 1 });
+  } else {
+    log(room, `${player.name} берёт карту и пропускает ход`, { fx: 'draw', target: player.id, n: 1 });
+    advance(room, 1);
+  }
+}
+
+function doPass(room, player) {
+  if (!room.drawnCardId) fail('Сначала возьмите карту из колоды');
+  log(room, `${player.name} пасует`);
+  advance(room, 1);
+}
+
+function doUno(room, player) {
+  if (player.saidUno) return;
+  player.saidUno = true;
+  log(room, `${player.name}: «UNO!»`, { uno: true, fx: 'uno', by: player.id });
+}
+
+function doCatch(room, player, target) {
+  if (!target || target === player) fail('Некого ловить');
+  if (target.hand.length !== 1 || target.saidUno) fail('Поздно — ловить уже нечего');
+  drawCards(room, target, 2);
+  log(room, `${player.name} ловит ${target.name} без «UNO» — штраф +2 карты`, { fx: 'catch', by: player.id, target: target.id, n: 2 });
+}
+
+/* ---------- компьютерные игроки ---------- */
+
+const rand = (a, b) => a + Math.random() * (b - a);
+
+function clearBotTimers(room) {
+  clearTimeout(room.botTimer); room.botTimer = null;
+  clearTimeout(room.catchTimer); room.catchTimer = null;
+}
+
+function scheduleBots(room) {
+  if (room.phase !== 'playing' || !rooms.has(room.code)) { clearBotTimers(room); return; }
+  // компьютер ходит, только пока за столом есть кто-то из людей
+  if (!humans(room).some((p) => p.conns > 0)) return;
+
+  const cur = currentPlayer(room);
+  if (cur && cur.isBot && !room.botTimer) {
+    room.botTimer = setTimeout(() => {
+      room.botTimer = null;
+      if (room.phase !== 'playing' || currentPlayer(room) !== cur) { broadcast(room); return; }
+      try { botMove(room, cur); } catch (e) { console.error('bot', e); if (currentPlayer(room) === cur) advance(room, 1); }
+      broadcast(room);
+    }, rand(BOT_DELAY_MS[0], BOT_DELAY_MS[1]) + (room.drawnCardId ? -300 : 0));
+  }
+
+  // компьютер ловит тех, кто забыл крикнуть UNO
+  const bots = room.players.filter((p) => p.isBot);
+  const victim = room.players.find((p) => p.hand.length === 1 && !p.saidUno);
+  if (bots.length && victim && !room.catchTimer) {
+    const candidates = bots.filter((b) => b !== victim);
+    if (!candidates.length) return;
+    const catcher = candidates[crypto.randomInt(candidates.length)];
+    room.catchTimer = setTimeout(() => {
+      room.catchTimer = null;
+      if (room.phase === 'playing' && victim.hand.length === 1 && !victim.saidUno && room.players.includes(victim)) {
+        doCatch(room, catcher, victim);
+        broadcast(room);
+      }
+    }, rand(2200, 4000));
+  }
+}
+
+function botColor(bot, except) {
+  const cnt = { red: 0, yellow: 0, green: 0, blue: 0 };
+  for (const c of bot.hand) if (c !== except && cnt[c.color] !== undefined) cnt[c.color] += 1 + (/^\d$/.test(c.value) ? 0 : 0.5);
+  const best = Object.entries(cnt).sort((a, b) => b[1] - a[1]);
+  return best[0][1] > 0 ? best[0][0] : COLORS[crypto.randomInt(4)];
+}
+
+function botPick(room, bot, playable) {
+  const next = room.players[nextIndex(room, room.turn, 1)];
+  const danger = next.hand.length <= 2;          // следующий близок к победе — бьём его
+  const endgame = bot.hand.length <= 3;
+  const cnt = { red: 0, yellow: 0, green: 0, blue: 0 };
+  for (const c of bot.hand) if (cnt[c.color] !== undefined) cnt[c.color]++;
+  let best = null, bestScore = -Infinity;
+  for (const c of playable) {
+    let sc;
+    if (/^\d$/.test(c.value)) sc = 10 + Number(c.value) * 0.4;
+    else if (c.value === 'wild') sc = endgame ? 22 : 2;
+    else if (c.value === 'wild4') sc = danger ? 40 : (endgame ? 24 : 1);
+    else sc = danger ? 32 : 12;                    // пропуск / разворот / +2
+    if (cnt[c.color] !== undefined) sc += cnt[c.color] * 1.5;
+    sc += Math.random() * 3;
+    if (sc > bestScore) { bestScore = sc; best = c; }
+  }
+  return best;
+}
+
+function botMove(room, bot) {
+  if (room.drawnCardId) {
+    const card = bot.hand.find((c) => c.id === room.drawnCardId);
+    if (card && (Math.random() < 0.85 || bot.hand.length <= 3)) {
+      if (bot.hand.length === 2 && Math.random() < BOT_UNO_CHANCE) doUno(room, bot);
+      playCard(room, bot, card.id, card.color === 'wild' ? botColor(bot, card) : undefined);
+    } else doPass(room, bot);
+    return;
+  }
+  const playable = bot.hand.filter((c) => isPlayable(room, bot, c));
+  if (!playable.length) { doDraw(room, bot); return; }
+  const card = botPick(room, bot, playable);
+  if (bot.hand.length === 2 && Math.random() < BOT_UNO_CHANCE) doUno(room, bot);
+  playCard(room, bot, card.id, card.color === 'wild' ? botColor(bot, card) : undefined);
 }
 
 /* ---------- API ---------- */
@@ -344,7 +482,7 @@ function broadcast(room) {
 function findPlayer(body) {
   const room = rooms.get(String(body.room || '').toUpperCase().trim());
   if (!room) fail('Комната не найдена');
-  const player = room.players.find((p) => p.token === body.token);
+  const player = body.token ? room.players.find((p) => p.token === body.token) : null;
   if (!player) fail('Вы не участник этой комнаты');
   room.lastActivity = Date.now();
   return { room, player };
@@ -356,6 +494,11 @@ function handleApi(name, body) {
     const room = createRoom();
     const player = addPlayer(room, pname);
     log(room, `${pname} создаёт комнату`);
+    const nBots = Math.max(0, Math.min(MAX_PLAYERS - 1, parseInt(body.bots, 10) || 0));
+    if (nBots) {
+      for (let i = 0; i < nBots; i++) addBot(room);
+      startRound(room);
+    }
     return { room: room.code, token: player.token, playerId: player.id };
   }
 
@@ -397,43 +540,25 @@ function handleApi(name, body) {
         playCard(room, player, String(body.cardId), body.color);
         break;
 
-      case 'draw': {
+      case 'draw':
         needTurn();
-        if (room.drawnCardId) fail('Вы уже взяли карту — сыграйте её или пасуйте');
-        const [card] = drawCards(room, player, 1);
-        if (!card) { log(room, `${player.name} пропускает ход (колода пуста)`); advance(room, 1); break; }
-        if (isPlayable(room, player, card)) {
-          room.drawnCardId = card.id;
-          log(room, `${player.name} берёт карту`, { fx: 'draw', target: player.id, n: 1 });
-        } else {
-          log(room, `${player.name} берёт карту и пропускает ход`, { fx: 'draw', target: player.id, n: 1 });
-          advance(room, 1);
-        }
+        doDraw(room, player);
         break;
-      }
 
       case 'pass':
         needTurn();
-        if (!room.drawnCardId) fail('Сначала возьмите карту из колоды');
-        log(room, `${player.name} пасует`);
-        advance(room, 1);
+        doPass(room, player);
         break;
 
       case 'uno':
         if (room.phase !== 'playing') fail('Раунд не идёт');
         if (!(player.hand.length === 1 || (myTurn && player.hand.length === 2))) fail('UNO можно крикнуть, когда остаётся одна карта');
-        if (player.saidUno) break;
-        player.saidUno = true;
-        log(room, `${player.name}: «UNO!»`, { uno: true, fx: 'uno', by: player.id });
+        doUno(room, player);
         break;
 
       case 'catch': {
         if (room.phase !== 'playing') fail('Раунд не идёт');
-        const target = room.players.find((p) => p.id === body.target);
-        if (!target || target === player) fail('Некого ловить');
-        if (target.hand.length !== 1 || target.saidUno) fail('Поздно — ловить уже нечего');
-        drawCards(room, target, 2);
-        log(room, `${player.name} ловит ${target.name} без «UNO» — штраф +2 карты`, { fx: 'catch', by: player.id, target: target.id, n: 2 });
+        doCatch(room, player, room.players.find((p) => p.id === body.target));
         break;
       }
 
@@ -441,6 +566,11 @@ function handleApi(name, body) {
         if (!isHost) fail('Следующий раунд запускает создатель комнаты');
         if (room.phase !== 'roundOver') fail('Раунд ещё не закончен');
         startRound(room);
+        break;
+
+      case 'addBot':
+        if (!isHost) fail('Добавлять компьютер может только создатель комнаты');
+        addBot(room);
         break;
 
       case 'kick': {
@@ -453,7 +583,7 @@ function handleApi(name, body) {
 
       case 'leave':
         removePlayer(room, player);
-        broadcast(room);
+        if (rooms.has(room.code)) broadcast(room);
         return { ok: true };
 
       default:
@@ -470,7 +600,8 @@ function handleApi(name, body) {
 
 function handleEvents(req, res, url) {
   const room = rooms.get(String(url.searchParams.get('room') || '').toUpperCase());
-  const player = room && room.players.find((p) => p.token === url.searchParams.get('token'));
+  const token = url.searchParams.get('token');
+  const player = room && token && room.players.find((p) => p.token === token);
   if (!player) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('not found');
@@ -561,8 +692,8 @@ setInterval(() => {
   for (const room of rooms.values()) {
     if (room.phase !== 'playing') continue;
     const cur = currentPlayer(room);
-    if (!cur || cur.conns > 0) continue;
-    if (!room.players.some((p) => p.conns > 0)) continue; // все офлайн — ждём
+    if (!cur || cur.isBot || cur.conns > 0) continue;
+    if (!humans(room).some((p) => p.conns > 0)) continue; // все офлайн — ждём
     const since = Math.max(cur.disconnectedAt || 0, room.turnStartedAt);
     if (now - since < AFK_SECONDS * 1000) continue;
     if (!room.drawnCardId) drawCards(room, cur, 1);

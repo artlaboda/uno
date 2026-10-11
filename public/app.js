@@ -118,6 +118,23 @@
     try { enterRoom(await api('create', { name }), name); } catch (e) { toast(e.message); }
   };
 
+  let botCount = 2;
+  try { botCount = Number(localStorage.getItem('uno-bots')) || 2; } catch (e) { /* ignore */ }
+  const chips = document.querySelectorAll('.bot-count .chip');
+  const syncChips = () => chips.forEach((c) => c.classList.toggle('on', Number(c.dataset.n) === botCount));
+  chips.forEach((c) => {
+    c.onclick = () => {
+      botCount = Number(c.dataset.n); syncChips();
+      try { localStorage.setItem('uno-bots', String(botCount)); } catch (e) { /* ignore */ }
+    };
+  });
+  syncChips();
+
+  $('soloBtn').onclick = async () => {
+    const name = getName(); if (!name) return;
+    try { enterRoom(await api('create', { name, bots: botCount }), name); } catch (e) { toast(e.message); }
+  };
+
   $('joinBtn').onclick = async () => {
     const name = getName(); if (!name) return;
     const room = $('codeInput').value.trim().toUpperCase();
@@ -140,6 +157,7 @@
     }
   };
   $('startBtn').onclick = () => act('start');
+  $('addBotBtn').onclick = () => act('addBot');
   $('lobbyLeaveBtn').onclick = leave;
   $('gameLeaveBtn').onclick = () => { if (confirm('Выйти из игры? Ваши карты вернутся в колоду.')) leave(); };
 
@@ -317,11 +335,12 @@
 
   function playerRow(p, extra) {
     const li = document.createElement('li');
-    const av = document.createElement('div'); av.className = 'avatar'; av.textContent = p.name[0].toUpperCase();
+    const av = document.createElement('div'); av.className = 'avatar'; av.textContent = p.isBot ? '🤖' : p.name[0].toUpperCase();
     const name = document.createElement('div'); name.className = 'grow';
     name.textContent = p.name + (p.id === view.me ? ' (вы)' : '') + (p.id === view.hostId ? ' 👑' : '');
-    const dot = document.createElement('span'); dot.className = 'dot' + (p.online ? '' : ' off');
-    dot.title = p.online ? 'в сети' : 'не в сети';
+    let dot;
+    if (p.isBot) { dot = document.createElement('span'); dot.className = 'bot-tag'; dot.textContent = 'компьютер'; }
+    else { dot = document.createElement('span'); dot.className = 'dot' + (p.online ? '' : ' off'); dot.title = p.online ? 'в сети' : 'не в сети'; }
     li.append(av, name, dot);
     if (extra) li.append(extra);
     return li;
@@ -347,6 +366,7 @@
     view.players.forEach((p) => ul.append(playerRow(p, kickButton(p))));
     const isHost = view.hostId === view.me;
     $('startBtn').classList.toggle('hidden', !isHost);
+    $('addBotBtn').classList.toggle('hidden', !isHost || view.players.length >= view.limits.max);
     $('lobbyWait').classList.toggle('hidden', isHost);
     $('startBtn').disabled = view.players.length < view.limits.min;
     $('startBtn').textContent = view.players.length < view.limits.min ? 'Ждём игроков…' : 'Начать игру';
@@ -369,7 +389,7 @@
       box.dataset.id = p.id;
       const head = document.createElement('div'); head.className = 'opp-head';
       const av = document.createElement('div'); av.className = 'avatar'; av.textContent = p.name[0].toUpperCase();
-      const nm = document.createElement('div'); nm.className = 'opp-name'; nm.textContent = p.name + (p.id === view.hostId ? ' 👑' : '');
+      const nm = document.createElement('div'); nm.className = 'opp-name'; nm.textContent = (p.isBot ? '🤖 ' : '') + p.name + (p.id === view.hostId ? ' 👑' : '');
       const dot = document.createElement('span'); dot.className = 'dot' + (p.online ? '' : ' off');
       head.append(av, nm, dot);
       const kb = p.online ? null : kickButton(p); // в игре удалить можно только отключившегося
