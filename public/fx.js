@@ -29,6 +29,32 @@ window.UnoFX = (() => {
   ['pointerdown', 'keydown', 'touchstart'].forEach((ev) =>
     window.addEventListener(ev, () => audio(), { once: true, passive: true }));
 
+  /* Записанные звуки (mp3): грузятся заранее, играют через общий микшер */
+  const samples = {};
+  function loadSample(name) {
+    if (samples[name] !== undefined) return;
+    samples[name] = null;
+    fetch('sounds/' + name + '.mp3').then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(r.status)))
+      .then((buf) => { samples[name] = { buf, decoded: null }; })
+      .catch(() => { samples[name] = false; });
+  }
+  function playSample(name, o = {}) {
+    const a = audio(); if (!a) return false;
+    const s = samples[name];
+    if (!s) return false;
+    const go = (decoded) => {
+      const src = a.createBufferSource(); src.buffer = decoded;
+      src.playbackRate.value = o.rate || 1;
+      const g = a.createGain(); g.gain.value = o.vol == null ? 1 : o.vol;
+      src.connect(g); g.connect(master);
+      src.start(a.currentTime + (o.delay || 0));
+    };
+    if (s.decoded) { go(s.decoded); return true; }
+    a.decodeAudioData(s.buf.slice(0)).then((d) => { s.decoded = d; go(d); }).catch(() => { samples[name] = false; });
+    return true;
+  }
+  loadSample('uno');
+
   function tone(freq, dur, o = {}) {
     const a = audio(); if (!a) return;
     const t = a.currentTime + (o.delay || 0);
@@ -81,6 +107,14 @@ window.UnoFX = (() => {
     wild() { [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.22, { type: 'triangle', vol: 0.18, delay: i * 0.07 })); },
     uno() {
       const a = audio(); if (!a) return;
+      if (playSample('uno', { vol: 1.2, rate: 1 + (Math.random() - 0.5) * 0.06 })) {
+        // Фанфара поверх записанного выкрика
+        [[784, 0], [988, 0.07], [1175, 0.14], [1568, 0.21]].forEach(([f, d]) => tone(f, 0.3, { type: 'triangle', vol: 0.1, delay: d + 0.3 }));
+        tone(1568, 0.6, { type: 'triangle', vol: 0.09, delay: 0.62 });
+        for (let i = 0; i < 5; i++) tone(2600 + i * 400, 0.09, { type: 'sine', vol: 0.05, delay: 0.7 + i * 0.05 });
+        return;
+      }
+      // Запасной вариант, если mp3 не загрузился
       // «Голос»: пила через две формантные полосы — гласная «У», потом «О»
       const t0 = a.currentTime;
       const say = (f0, vowel, start, dur, vol) => {

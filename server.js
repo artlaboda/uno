@@ -789,12 +789,15 @@ const STATIC = {
   '/fx.js': ['fx.js', 'application/javascript; charset=utf-8'],
 };
 
+const SOUND_RE = /^\/sounds\/([a-z0-9_-]+)\.mp3$/;
+
 function serveStatic(pathname, res) {
-  const entry = STATIC[pathname];
+  const m = pathname.match(SOUND_RE);
+  const entry = m ? [path.join('sounds', m[1] + '.mp3'), 'audio/mpeg'] : STATIC[pathname];
   if (!entry) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('Не найдено'); return; }
   fs.readFile(path.join(PUBLIC_DIR, entry[0]), (err, data) => {
     if (err) { res.writeHead(500); res.end('Ошибка чтения файла'); return; }
-    res.writeHead(200, { 'Content-Type': entry[1], 'Cache-Control': 'no-cache' });
+    res.writeHead(200, { 'Content-Type': entry[1], 'Cache-Control': m ? 'public, max-age=86400' : 'no-cache' });
     res.end(data);
   });
 }

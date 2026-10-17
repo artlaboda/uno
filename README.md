@@ -14,6 +14,7 @@ public/index.html  — интерфейс
 public/app.js      — логика клиента
 public/style.css   — оформление
 public/fx.js       — анимации и звуки
+public/sounds/     — записанные звуки (uno.mp3 — выкрик «UNO!», синтез голоса Piper, LibriTTS, CC BY 4.0)
 ```
 
 ## Запуск
