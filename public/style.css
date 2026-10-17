@@ -452,3 +452,34 @@ body.my-turn .hand { animation: handGlow 1.8s ease-in-out infinite; border-radiu
   position: relative; z-index: 2;
 }
 .btn-penalty { background: var(--red); border-color: transparent; }
+
+/* ---------- таймер хода ---------- */
+.turn-timer { display: flex; align-items: center; gap: 10px; padding: 0 16px 8px; width: min(420px, 100%); margin: 0 auto; box-sizing: border-box; }
+.turn-bar { flex: 1; height: 10px; border-radius: 999px; background: rgba(0,0,0,.35); overflow: hidden; border: 1px solid var(--line); }
+.turn-fill { height: 100%; width: 100%; background: var(--accent); border-radius: 999px; transition: width .1s linear; }
+.turn-fill.warn { background: #ff9f1c; }
+.turn-fill.crit { background: var(--red); }
+#turnSec { font-weight: 800; font-variant-numeric: tabular-nums; min-width: 36px; text-align: right; }
+.opp-timer { margin-top: 8px; height: 5px; border-radius: 999px; background: rgba(0,0,0,.35); overflow: hidden; }
+.opp-timer-fill { height: 100%; width: 100%; background: var(--accent); transition: width .1s linear; }
+.opp-timer-fill.crit { background: var(--red); }
+
+/* ---------- эмоции ---------- */
+.btn-emote { font-size: 18px; padding: 6px 10px; }
+.emote-panel {
+  display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; padding: 6px 16px;
+  animation: drawIn .2s ease-out;
+}
+.emote-panel button {
+  font-size: 30px; line-height: 1; width: 52px; height: 52px; border-radius: 14px; cursor: pointer;
+  background: rgba(255,255,255,.08); border: 1px solid var(--line); transition: transform .1s, background .15s;
+}
+.emote-panel button:hover { transform: scale(1.18); background: rgba(255,255,255,.18); }
+.emote-panel button:active { transform: scale(.95); }
+.fx-emote {
+  position: absolute; font-size: 84px; line-height: 1;
+  filter: drop-shadow(0 10px 20px rgba(0,0,0,.5));
+}
+.fx-particle { position: absolute; font-size: 26px; line-height: 1; }
+.fx-particle.text { font-weight: 900; font-style: italic; color: var(--yellow); -webkit-text-stroke: 1px #000; font-size: 22px; }
+@media (max-width: 600px) { .fx-emote { font-size: 64px; } .emote-panel button { width: 44px; height: 44px; font-size: 26px; } }

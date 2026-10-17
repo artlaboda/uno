@@ -25,7 +25,11 @@ const TARGET_SCORE = 500;          // до скольки очков идёт п
 const TARGET_OPTIONS = [100, 200, 300, 500];
 const ROUND_MINUTES = 10;          // длительность раунда по умолчанию, 0 — без ограничения
 const ROUND_MINUTE_OPTIONS = [0, 3, 5, 10, 15, 20];
-const PILE_VISIBLE = 10;           // сколько верхних карт сброса видно в стопке
+const PILE_VISIBLE = 10;
+const TURN_MAX_SECONDS = 30;       // лимит на ход при игре на время (в начале раунда)
+const TURN_MIN_SECONDS = 4;        // минимальный лимит на ход (в самом конце раунда)
+const EMOTES = ['angry', 'laugh', 'joy', 'cool', 'shock', 'think', 'cry', 'love'];
+const EMOTE_COOLDOWN_MS = 2500;           // сколько верхних карт сброса видно в стопке
 const AFK_SECONDS = 30;            // через сколько секунд за отключившегося игрока ход делается автоматически
 const ROOM_TTL_MS = 3 * 60 * 60 * 1000; // пустая комната удаляется через 3 часа без активности
 const BOT_NAMES = ['Вася', 'Маша', 'Гоша', 'Оля', 'Петя', 'Зина', 'Тоша', 'Лиза'];
@@ -184,6 +188,8 @@ function setTurn(room, idx) {
   room.turn = idx;
   room.drawnCardId = null;
   room.turnStartedAt = Date.now();
+  const lim = turnLimitMs(room);
+  room.turnEndsAt = lim ? Math.min(room.turnStartedAt + lim, room.roundEndsAt) : null;
 }
 const advance = (room, steps = 1) => setTurn(room, nextIndex(room, room.turn, steps));
 
@@ -209,12 +215,19 @@ function drawCards(room, player, n) {
 }
 
 function isPlayable(room, player, card) {
-  if (room.pending) return card.value === room.pending.type; // перевод: +2 на +2, +4 на +4
+  // Перевод: на +2 можно положить +2 или +4; на +4 — только +4
+  if (room.pending) return card.value === 'wild4' || (room.pending.type === 'draw2' && card.value === 'draw2');
   if (room.drawnCardId && card.id !== room.drawnCardId) return false;
-  if (card.value === 'wild') return true;
-  // «Закажи цвет +4» — только если на руке нет карт текущего цвета (официальное правило)
-  if (card.value === 'wild4') return !player.hand.some((c) => c.color === room.currentColor);
+  if (card.value === 'wild' || card.value === 'wild4') return true; // чёрные карты — в любой момент
   return card.color === room.currentColor || card.value === topCard(room).value;
+}
+
+// Лимит времени на ход: чем меньше осталось до конца раунда, тем меньше времени на решение
+function turnLimitMs(room) {
+  if (!room.roundEndsAt) return 0;
+  const left = (room.roundEndsAt - Date.now()) / 1000;
+  const sec = Math.max(TURN_MIN_SECONDS, Math.min(TURN_MAX_SECONDS, left / 8));
+  return Math.round(sec * 1000);
 }
 
 /* ---------- ход игры ---------- */
@@ -256,9 +269,7 @@ function playCard(room, player, cardId, chosenColor) {
   if (idx < 0) fail('Такой карты нет на руке');
   const card = player.hand[idx];
   if (!isPlayable(room, player, card)) {
-    fail(card.value === 'wild4'
-      ? '«+4» можно сыграть, только если нет карт текущего цвета'
-      : 'Эту карту сейчас положить нельзя');
+    fail(room.pending ? `Сейчас можно только перевести картой ${room.pending.type === 'draw2' ? '«+2» или «+4»' : '«+4»'} — или взять карты` : 'Эту карту сейчас положить нельзя');
   }
   const isWild = card.color === 'wild';
   if (isWild && !COLORS.includes(chosenColor)) fail('Выберите цвет');
@@ -428,6 +439,8 @@ function viewFor(room, player) {
     discardCount: room.discard.length,
     drawnCardId: myTurn ? room.drawnCardId : null,
     pending: room.pending,
+    turnEndsAt: room.turnEndsAt || null,
+    emotes: EMOTES,
     canUno: playing && !player.saidUno && (player.hand.length === 1 || (myTurn && player.hand.length === 2)),
     roundNo: room.roundNo,
     lastRound: room.lastRound,
@@ -440,6 +453,7 @@ function viewFor(room, player) {
     history: room.history.slice(-20),
     pile: room.discard.slice(-PILE_VISIBLE),
     afkSeconds: AFK_SECONDS,
+    turnMax: TURN_MAX_SECONDS,
     log: room.log.slice(-14),
     limits: { min: MIN_PLAYERS, max: MAX_PLAYERS },
   };
@@ -567,7 +581,7 @@ function botPick(room, bot, playable) {
 
 function botMove(room, bot) {
   if (room.pending) {
-    const st = bot.hand.filter((c) => isPlayable(room, bot, c));
+    const st = bot.hand.filter((c) => isPlayable(room, bot, c)).sort((a, b) => (a.value === 'draw2' ? -1 : 1) - (b.value === 'draw2' ? -1 : 1));
     if (st.length && Math.random() < 0.92) {
       const card = st[0];
       if (bot.hand.length === 2 && Math.random() < BOT_UNO_CHANCE) doUno(room, bot);
@@ -664,6 +678,16 @@ function handleApi(name, body) {
         needTurn();
         doPass(room, player);
         break;
+
+      case 'emote': {
+        const e = String(body.emote || '');
+        if (!EMOTES.includes(e)) fail('Неизвестная эмоция');
+        const now = Date.now();
+        if (player.lastEmoteAt && now - player.lastEmoteAt < EMOTE_COOLDOWN_MS) return { ok: true };
+        player.lastEmoteAt = now;
+        log(room, `${player.name}: ${({ angry: '😡', laugh: '😂', joy: '🥳', cool: '😎', shock: '😱', think: '🤔', cry: '😭', love: '😍' })[e]}`, { fx: 'emote', by: player.id, emote: e });
+        break;
+      }
 
       case 'uno':
         if (room.phase !== 'playing') fail('Раунд не идёт');
@@ -824,16 +848,20 @@ setInterval(() => {
       continue;
     }
     const cur = currentPlayer(room);
-    if (!cur || cur.isBot || cur.conns > 0) continue;
+    if (!cur || cur.isBot) continue;
     if (!humans(room).some((p) => p.conns > 0)) continue; // все офлайн — ждём
-    const since = Math.max(cur.disconnectedAt || 0, room.turnStartedAt);
-    if (now - since < AFK_SECONDS * 1000) continue;
+    let reason = null;
+    if (room.turnEndsAt && now >= room.turnEndsAt) reason = 'time';
+    else if (cur.conns === 0 && now - Math.max(cur.disconnectedAt || 0, room.turnStartedAt) >= AFK_SECONDS * 1000) reason = 'afk';
+    if (!reason) continue;
+    const why = reason === 'time' ? 'время на ход вышло' : 'не в сети';
     if (room.pending) {
-      log(room, `${cur.name} не в сети`);
+      log(room, `${cur.name}: ${why}`, reason === 'time' ? { fx: 'turnup', target: cur.id } : {});
       takePending(room, cur);
     } else {
-      if (!room.drawnCardId) drawCards(room, cur, 1);
-      log(room, `${cur.name} не в сети — автоматически берёт карту и пропускает ход`, { fx: 'draw', target: cur.id, n: room.drawnCardId ? 0 : 1 });
+      const n = room.drawnCardId ? 0 : 1;
+      if (n) drawCards(room, cur, 1);
+      log(room, `${cur.name}: ${why} — берёт карту и пропускает ход`, { fx: 'draw', target: cur.id, n, penalty: reason === 'time', turnup: reason === 'time' });
       advance(room, 1);
     }
     broadcast(room);
@@ -876,7 +904,7 @@ function restore(json) {
     r.settings = Object.assign({ roundMinutes: ROUND_MINUTES, target: TARGET_SCORE, stacking: true }, r.settings);
     r.history = r.history || [];
     r.players.forEach((p) => { p.conns = 0; p.disconnectedAt = now; });
-    if (r.phase === 'playing') r.turnStartedAt = now;
+    if (r.phase === 'playing') { r.turnStartedAt = now; const lim = turnLimitMs(r); r.turnEndsAt = lim ? now + lim : null; }
     if (now - (r.lastActivity || 0) > ROOM_TTL_MS) continue;
     rooms.set(r.code, r);
   }

@@ -79,7 +79,54 @@ window.UnoFX = (() => {
       [0, 0.1, 0.2, 0.3].forEach((d) => tone(180 - d * 200, 0.12, { type: 'sawtooth', vol: 0.08, delay: d }));
     },
     wild() { [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.22, { type: 'triangle', vol: 0.18, delay: i * 0.07 })); },
-    uno() { tone(880, 0.14, { type: 'square', vol: 0.16 }); tone(1320, 0.3, { type: 'square', vol: 0.16, delay: 0.13 }); },
+    uno() {
+      const a = audio(); if (!a) return;
+      // «Голос»: пила через две формантные полосы — гласная «У», потом «О»
+      const t0 = a.currentTime;
+      const say = (f0, vowel, start, dur, vol) => {
+        const osc = a.createOscillator(); osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(f0, t0 + start);
+        osc.frequency.linearRampToValueAtTime(f0 * 1.12, t0 + start + dur * 0.35);
+        osc.frequency.linearRampToValueAtTime(f0 * 0.9, t0 + start + dur);
+        const vib = a.createOscillator(); vib.frequency.value = 6.5;
+        const vg = a.createGain(); vg.gain.value = f0 * 0.03; vib.connect(vg); vg.connect(osc.frequency);
+        const env = a.createGain();
+        env.gain.setValueAtTime(0.0001, t0 + start);
+        env.gain.exponentialRampToValueAtTime(vol, t0 + start + 0.04);
+        env.gain.setValueAtTime(vol, t0 + start + dur * 0.7);
+        env.gain.exponentialRampToValueAtTime(0.0001, t0 + start + dur);
+        const formants = vowel === 'u' ? [[320, 10], [800, 14], [2500, 20]] : [[500, 9], [1000, 12], [2600, 18]];
+        osc.connect(env);
+        for (const [fq, q] of formants) {
+          const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = fq; bp.Q.value = q;
+          const g = a.createGain(); g.gain.value = fq < 600 ? 1 : 0.55;
+          env.connect(bp); bp.connect(g); g.connect(master);
+        }
+        osc.start(t0 + start); vib.start(t0 + start);
+        osc.stop(t0 + start + dur + 0.05); vib.stop(t0 + start + dur + 0.05);
+      };
+      say(300, 'u', 0.0, 0.22, 0.9);   // «У»
+      say(260, 'o', 0.2, 0.42, 1.0);   // «НО!»
+      // Фанфара с «блеском»
+      [[784, 0], [988, 0.07], [1175, 0.14], [1568, 0.21]].forEach(([f, d]) => tone(f, 0.35, { type: 'triangle', vol: 0.16, delay: d + 0.05 }));
+      tone(1568, 0.7, { type: 'triangle', vol: 0.14, delay: 0.42 });
+      tone(392, 0.7, { type: 'sawtooth', vol: 0.06, delay: 0.42 });
+      for (let i = 0; i < 5; i++) tone(2600 + i * 400, 0.09, { type: 'sine', vol: 0.07, delay: 0.5 + i * 0.05 });
+      noise(0.25, { freq: 6000, q: 0.5, vol: 0.08, delay: 0.45 });
+    },
+    emote(kind) {
+      switch (kind) {
+        case 'angry': tone(90, 0.5, { type: 'sawtooth', vol: 0.3, to: 60 }); noise(0.4, { filter: 'lowpass', freq: 400, vol: 0.5 }); for (let i = 0; i < 4; i++) tone(120 + i * 15, 0.08, { type: 'square', vol: 0.12, delay: 0.1 + i * 0.09 }); break;
+        case 'laugh': for (let i = 0; i < 6; i++) { tone(520 - i * 35, 0.11, { type: 'square', vol: 0.12, delay: i * 0.13 }); noise(0.07, { freq: 1500, q: 1, vol: 0.2, delay: i * 0.13 }); } break;
+        case 'joy': [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.2, { type: 'triangle', vol: 0.18, delay: i * 0.08 })); tone(1318, 0.5, { type: 'triangle', vol: 0.15, delay: 0.32 }); noise(0.3, { freq: 7000, q: 0.5, vol: 0.08, delay: 0.3 }); break;
+        case 'cool': tone(220, 0.3, { type: 'sawtooth', vol: 0.12, to: 180 }); tone(330, 0.35, { type: 'sawtooth', vol: 0.1, delay: 0.25, to: 300 }); break;
+        case 'shock': tone(1200, 0.08, { type: 'square', vol: 0.14 }); tone(1600, 0.4, { type: 'square', vol: 0.12, delay: 0.08, to: 2200 }); break;
+        case 'think': [0, 0.25, 0.5].forEach((d) => tone(660, 0.1, { type: 'sine', vol: 0.12, delay: d })); break;
+        case 'cry': tone(600, 0.5, { type: 'sine', vol: 0.15, to: 300 }); tone(560, 0.5, { type: 'sine', vol: 0.12, to: 280, delay: 0.45 }); break;
+        case 'love': [659, 784, 988, 1175].forEach((f, i) => tone(f, 0.28, { type: 'sine', vol: 0.14, delay: i * 0.1 })); break;
+        default: break;
+      }
+    },
     caught() { tone(140, 0.4, { type: 'sawtooth', vol: 0.22 }); tone(147, 0.4, { type: 'sawtooth', vol: 0.18 }); },
     myTurn() { tone(1046, 0.5, { vol: 0.22 }); tone(1568, 0.6, { vol: 0.14, delay: 0.09 }); },
     error() { tone(180, 0.12, { type: 'square', vol: 0.12 }); },
@@ -300,6 +347,108 @@ window.UnoFX = (() => {
     ], { duration: 1300, easing: 'ease-out', fill: 'both' }).finished.then(() => el.remove(), () => el.remove());
   }
 
+  const EMOJI = { angry: '😡', laugh: '😂', joy: '🥳', cool: '😎', shock: '😱', think: '🤔', cry: '😭', love: '😍' };
+  function emote(kind, rect, isMe) {
+    if (!rect) return;
+    ensureLayer();
+    const cx = rect.left + rect.width / 2;
+    const cy = isMe ? rect.top + rect.height * 0.35 : rect.top + rect.height / 2;
+    const el = document.createElement('div');
+    el.className = 'fx-emote';
+    el.textContent = EMOJI[kind] || '🙂';
+    el.style.left = cx + 'px'; el.style.top = cy + 'px';
+    layer.append(el);
+    const base = 'translate(-50%,-50%)';
+    const anims = {
+      angry: [
+        { transform: base + ' scale(.2)', opacity: 0, filter: 'none' },
+        { transform: base + ' scale(1.6)', opacity: 1, offset: 0.15 },
+        { transform: base + ' scale(1.4) translateX(-8px) rotate(-8deg)', offset: 0.3 },
+        { transform: base + ' scale(1.5) translateX(8px) rotate(8deg)', offset: 0.45, filter: 'drop-shadow(0 0 18px #ff2020)' },
+        { transform: base + ' scale(1.4) translateX(-8px) rotate(-6deg)', offset: 0.6 },
+        { transform: base + ' scale(1.6) translateX(6px) rotate(6deg)', offset: 0.75, filter: 'drop-shadow(0 0 24px #ff2020)' },
+        { transform: base + ' scale(2.2)', opacity: 0 },
+      ],
+      laugh: [
+        { transform: base + ' scale(.3) rotate(0)', opacity: 0 },
+        { transform: base + ' scale(1.4) rotate(-15deg)', opacity: 1, offset: 0.15 },
+        { transform: base + ' scale(1.2) rotate(15deg) translateY(-10px)', offset: 0.3 },
+        { transform: base + ' scale(1.45) rotate(-15deg) translateY(6px)', offset: 0.45 },
+        { transform: base + ' scale(1.2) rotate(15deg) translateY(-10px)', offset: 0.6 },
+        { transform: base + ' scale(1.45) rotate(-12deg) translateY(6px)', offset: 0.75 },
+        { transform: base + ' scale(1) translateY(-60px)', opacity: 0 },
+      ],
+      joy: [
+        { transform: base + ' scale(.2) translateY(40px)', opacity: 0 },
+        { transform: base + ' scale(1.6) translateY(-30px) rotate(-10deg)', opacity: 1, offset: 0.25 },
+        { transform: base + ' scale(1.3) translateY(0) rotate(10deg)', offset: 0.45 },
+        { transform: base + ' scale(1.6) translateY(-30px) rotate(-10deg)', offset: 0.65 },
+        { transform: base + ' scale(1.3) translateY(0)', offset: 0.8 },
+        { transform: base + ' scale(2) translateY(-80px)', opacity: 0 },
+      ],
+      cool: [
+        { transform: base + ' scale(.5) translateY(-40px)', opacity: 0 },
+        { transform: base + ' scale(1.5)', opacity: 1, offset: 0.2 },
+        { transform: base + ' scale(1.5) rotate(-6deg)', offset: 0.5 },
+        { transform: base + ' scale(1.5) rotate(6deg)', offset: 0.8 },
+        { transform: base + ' scale(1.2) translateX(120px)', opacity: 0 },
+      ],
+      shock: [
+        { transform: base + ' scale(.2)', opacity: 0 },
+        { transform: base + ' scale(2.1)', opacity: 1, offset: 0.12 },
+        { transform: base + ' scale(1.5) translateX(-6px)', offset: 0.3 },
+        { transform: base + ' scale(1.6) translateX(6px)', offset: 0.4 },
+        { transform: base + ' scale(1.5) translateX(-6px)', offset: 0.5 },
+        { transform: base + ' scale(1.6)', offset: 0.8 },
+        { transform: base + ' scale(.3)', opacity: 0 },
+      ],
+      think: [
+        { transform: base + ' scale(.4)', opacity: 0 },
+        { transform: base + ' scale(1.3) rotate(-8deg)', opacity: 1, offset: 0.2 },
+        { transform: base + ' scale(1.3) rotate(8deg) translateY(-6px)', offset: 0.5 },
+        { transform: base + ' scale(1.3) rotate(-8deg)', offset: 0.8 },
+        { transform: base + ' scale(1) translateY(-40px)', opacity: 0 },
+      ],
+      cry: [
+        { transform: base + ' scale(.4)', opacity: 0 },
+        { transform: base + ' scale(1.4)', opacity: 1, offset: 0.2 },
+        { transform: base + ' scale(1.35) translateY(4px) rotate(-4deg)', offset: 0.4 },
+        { transform: base + ' scale(1.4) translateY(0) rotate(4deg)', offset: 0.6 },
+        { transform: base + ' scale(1.35) translateY(4px)', offset: 0.8 },
+        { transform: base + ' scale(1) translateY(50px)', opacity: 0 },
+      ],
+      love: [
+        { transform: base + ' scale(.3)', opacity: 0 },
+        { transform: base + ' scale(1.5)', opacity: 1, offset: 0.2 },
+        { transform: base + ' scale(1.3)', offset: 0.4 },
+        { transform: base + ' scale(1.6)', offset: 0.55 },
+        { transform: base + ' scale(1.3)', offset: 0.7 },
+        { transform: base + ' scale(1.4) translateY(-70px)', opacity: 0 },
+      ],
+    };
+    el.animate(anims[kind] || anims.think, { duration: kind === 'laugh' || kind === 'angry' ? 1700 : 1500, easing: 'ease-in-out', fill: 'both' })
+      .finished.then(() => el.remove(), () => el.remove());
+    // Частицы вокруг
+    const particles = { angry: ['💢', '🔥', '💢'], laugh: ['ХА', 'ХА', 'ХА', 'ХА'], joy: ['🎉', '✨', '🎊', '⭐'], cool: ['✨'], shock: ['❗', '❗'], think: ['❓', '💭'], cry: ['💧', '💧', '💧'], love: ['❤️', '💕', '❤️'] }[kind] || [];
+    particles.forEach((txt, i) => {
+      const p = document.createElement('div');
+      p.className = 'fx-particle' + (txt.length > 1 && /[А-Я]/.test(txt) ? ' text' : '');
+      p.textContent = txt;
+      p.style.left = cx + 'px'; p.style.top = cy + 'px';
+      layer.append(p);
+      const ang = (i / particles.length) * Math.PI * 2 + Math.random() * 0.8;
+      const d = 50 + Math.random() * 50;
+      p.animate([
+        { transform: 'translate(-50%,-50%) scale(.3)', opacity: 0 },
+        { transform: `translate(calc(-50% + ${Math.cos(ang) * d * 0.6}px), calc(-50% + ${Math.sin(ang) * d * 0.6 - 20}px)) scale(1.2) rotate(${(Math.random() - 0.5) * 40}deg)`, opacity: 1, offset: 0.3 },
+        { transform: `translate(calc(-50% + ${Math.cos(ang) * d}px), calc(-50% + ${Math.sin(ang) * d - 60}px)) scale(.8)`, opacity: 0 },
+      ], { duration: 1300, delay: 150 + i * 90, easing: 'ease-out', fill: 'both' }).finished.then(() => p.remove(), () => p.remove());
+    });
+    if (kind === 'angry') { shake(document.body, false); if (isMe) hurt(); }
+    if (kind === 'joy' && isMe) confetti(1800);
+    sfx.emote(kind);
+  }
+
   function shake(el, strong) {
     if (!el) return;
     const d = strong ? 12 : 6;
@@ -397,7 +546,8 @@ window.UnoFX = (() => {
           }
           if (e.penalty) {
             at(start, () => {
-              shout(ctx.rectOf(e.target), `+${e.n}`, 'bad');
+              shout(ctx.rectOf(e.target), e.turnup ? '⏱ Время!' : `+${e.n}`, 'bad');
+              if (e.turnup) sfx.error();
               if (e.target === ctx.me) hurt();
             });
           }
@@ -423,7 +573,18 @@ window.UnoFX = (() => {
           });
           break;
         case 'uno':
-          at(t, () => { shout(ctx.rectOf(e.by), 'UNO!', 'uno'); sfx.uno(); });
+          at(t, () => {
+            shout(ctx.rectOf(e.by), 'UNO!', 'uno');
+            sfx.uno();
+            if (e.by === ctx.me) splash('UNO!', '#d7263d');
+          });
+          t += 300;
+          break;
+        case 'emote':
+          at(t, () => emote(e.emote, e.by === ctx.me ? ctx.boxOf(ctx.me).getBoundingClientRect() : ctx.rectOf(e.by), e.by === ctx.me));
+          break;
+        case 'turnup':
+          at(t, () => { shout(ctx.rectOf(e.target), '⏱ Время!', 'bad'); sfx.timeup(); });
           t += 300;
           break;
         case 'catch': {

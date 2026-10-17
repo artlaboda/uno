@@ -210,6 +210,13 @@
   $('passBtn').onclick = () => act('pass');
   $('unoBtn').onclick = () => act('uno');
   $('nextRoundBtn').onclick = () => act('nextRound');
+  $('emoteToggle').onclick = () => $('emotePanel').classList.toggle('hidden');
+  document.querySelectorAll('#emotePanel button').forEach((b) => {
+    b.onclick = () => { act('emote', { emote: b.dataset.emote }); $('emotePanel').classList.add('hidden'); };
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#emotePanel') && !e.target.closest('#emoteToggle')) $('emotePanel').classList.add('hidden');
+  });
   function syncMute() { $('muteBtn').textContent = UnoFX.isMuted() ? '🔇' : '🔊'; $('muteBtn').title = UnoFX.isMuted() ? 'Включить звук' : 'Выключить звук'; }
   $('muteBtn').onclick = () => { UnoFX.setMuted(!UnoFX.isMuted()); syncMute(); if (!UnoFX.isMuted()) UnoFX.sfx.flick(); };
   syncMute();
@@ -437,6 +444,11 @@
       const sc = document.createElement('span'); sc.textContent = `${p.score} оч.`;
       meta.append(cnt, sc);
       box.append(head, fan, meta);
+      if (p.id === view.turnId && view.turnEndsAt) {
+        const tt = document.createElement('div'); tt.className = 'opp-timer'; tt.dataset.turnTimer = '1';
+        const f = document.createElement('div'); f.className = 'opp-timer-fill'; tt.append(f);
+        box.append(tt);
+      }
       if (p.count === 1 && p.saidUno) {
         const badge = document.createElement('div'); badge.className = 'uno-badge'; badge.textContent = 'UNO!';
         box.append(badge);
@@ -594,6 +606,29 @@
     return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
   }
   let lastTickSec = null;
+  let lastTurnSec = null;
+  let turnTotal = 0, turnKey = null;
+  function tickTurn() {
+    const box = $('turnTimer');
+    const playing = view && view.phase === 'playing' && view.turnEndsAt;
+    if (!playing) { box.classList.add('hidden'); return; }
+    const key = view.turnId + ':' + view.turnEndsAt;
+    if (key !== turnKey) { turnKey = key; turnTotal = Math.max(1000, view.turnEndsAt - (view.serverNow || Date.now())); lastTurnSec = null; }
+    const left = Math.max(0, view.turnEndsAt - (Date.now() + clockOffset));
+    const frac = Math.min(1, left / turnTotal);
+    const myTurn = view.turnId === view.me;
+    box.classList.toggle('hidden', !myTurn);
+    if (myTurn) {
+      $('turnFill').style.width = (frac * 100) + '%';
+      $('turnFill').className = 'turn-fill' + (left < 5000 ? ' crit' : left < 10000 ? ' warn' : '');
+      const s = Math.ceil(left / 1000);
+      $('turnSec').textContent = s + ' с';
+      if (s <= 5 && s > 0 && s !== lastTurnSec) { lastTurnSec = s; UnoFX.sfx.tick(s <= 3); }
+    }
+    const of = document.querySelector('.opp-timer-fill');
+    if (of) { of.style.width = (frac * 100) + '%'; of.classList.toggle('crit', left < 5000); }
+  }
+  setInterval(tickTurn, 100);
   setInterval(() => {
     const el = $('roundTimer');
     if (!view || view.phase !== 'playing' || !view.roundEndsAt) { el.classList.add('hidden'); return; }
