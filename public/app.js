@@ -141,6 +141,7 @@
     chipRow($('homeRound'), ROUND_OPTIONS, homeSettings.roundMinutes, roundLabel, (v) => { homeSettings.roundMinutes = v; saveHome(); });
     chipRow($('homeTarget'), TARGET_OPTIONS, homeSettings.target, String, (v) => { homeSettings.target = v; saveHome(); });
     chipRow($('homeStack'), [true, false], homeSettings.stacking !== false, yesNo, (v) => { homeSettings.stacking = v; saveHome(); });
+    chipRow($('homeJump'), [true, false], homeSettings.jumpIn !== false, yesNo, (v) => { homeSettings.jumpIn = v; saveHome(); });
   }
   function saveHome() {
     try { localStorage.setItem('uno-settings', JSON.stringify(homeSettings)); } catch (e) { /* ignore */ }
@@ -234,8 +235,10 @@
   $('colorCancel').onclick = () => { pendingWildId = null; $('colorPicker').classList.add('hidden'); };
 
   function onCardClick(card, el) {
-    if (!view || view.turnId !== view.me) { toast('Сейчас не ваш ход'); UnoFX.sfx.error(); return; }
-    if (!view.playable.includes(card.id)) {
+    if (!view) return;
+    const jump = view.turnId !== view.me && (view.jumpable || []).includes(card.id);
+    if (view.turnId !== view.me && !jump) { toast('Сейчас не ваш ход'); UnoFX.sfx.error(); return; }
+    if (!jump && !view.playable.includes(card.id)) {
       el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake');
       UnoFX.sfx.error();
       return;
@@ -412,6 +415,7 @@
     chipRow($('lobbyRound'), view.options.roundMinutes, st.roundMinutes, roundLabel, (v) => act('settings', { roundMinutes: v }), !isHost);
     chipRow($('lobbyTarget'), view.options.target, st.target, String, (v) => act('settings', { target: v }), !isHost);
     chipRow($('lobbyStack'), [true, false], st.stacking !== false, yesNo, (v) => act('settings', { stacking: v }), !isHost);
+    chipRow($('lobbyJump'), [true, false], st.jumpIn !== false, yesNo, (v) => act('settings', { jumpIn: v }), !isHost);
   }
 
   function renderGame() {
@@ -505,7 +509,8 @@
     else if (myTurn) st.textContent = view.drawnCardId ? 'Взятую карту можно сыграть — или нажмите «Пас»' : 'Ваш ход';
     else {
       const cur = view.players.find((p) => p.id === view.turnId);
-      st.textContent = cur ? (pend ? `${cur.name}: +${pend.count} — переведёт или возьмёт?` : `Ходит ${cur.name}`)
+      const canJumpNow = (view.jumpable || []).length > 0;
+      st.textContent = cur ? (pend ? `${cur.name}: +${pend.count} — переведёт или возьмёт?` : (canJumpNow ? `⚡ Ходит ${cur.name} — можно перехватить!` : `Ходит ${cur.name}`))
         + (cur.online ? '' : ` (не в сети — авто-ход через ${view.afkSeconds} с)`) : '';
     }
 
@@ -524,6 +529,7 @@
       const el = makeCard(c);
       ids.add(c.id);
       if (myTurn) el.classList.add(view.playable.includes(c.id) ? 'ok' : 'dim');
+      else if ((view.jumpable || []).includes(c.id)) el.classList.add('jump');
       if (prevHandIds.size && !prevHandIds.has(c.id)) el.classList.add('new');
       el.onclick = () => onCardClick(c, el);
       hand.append(el);

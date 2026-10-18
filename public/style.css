@@ -453,6 +453,12 @@ body.my-turn .hand { animation: handGlow 1.8s ease-in-out infinite; border-radiu
 }
 .btn-penalty { background: var(--red); border-color: transparent; }
 
+/* ---------- перехват ---------- */
+.hand .card.jump { cursor: pointer; transform: translateY(-10px); box-shadow: 0 10px 20px rgba(0,0,0,.4), 0 0 0 3px #b14cff, 0 0 18px #b14cff; animation: jumpPulse 1s infinite; }
+.hand .card.jump:hover { transform: translateY(-18px); }
+@keyframes jumpPulse { 0%,100% { box-shadow: 0 10px 20px rgba(0,0,0,.4), 0 0 0 3px #b14cff, 0 0 10px #b14cff; } 50% { box-shadow: 0 10px 20px rgba(0,0,0,.4), 0 0 0 4px #d08cff, 0 0 26px #b14cff; } }
+.fx-shout.jump { background: #b14cff; color: #fff; }
+
 /* ---------- таймер хода ---------- */
 .turn-timer { display: flex; align-items: center; gap: 10px; padding: 0 16px 8px; width: min(420px, 100%); margin: 0 auto; box-sizing: border-box; }
 .turn-bar { flex: 1; height: 10px; border-radius: 999px; background: rgba(0,0,0,.35); overflow: hidden; border: 1px solid var(--line); }

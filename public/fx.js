@@ -170,6 +170,7 @@ window.UnoFX = (() => {
       [262, 330, 392].forEach((f) => tone(f, 1.1, { type: 'sine', vol: 0.1, delay: 0.65 }));
     },
     join() { tone(660, 0.12, { vol: 0.15 }); tone(990, 0.18, { vol: 0.12, delay: 0.08 }); },
+    jump() { tone(400, 0.08, { type: 'square', vol: 0.14, to: 1200 }); tone(1200, 0.18, { type: 'square', vol: 0.12, delay: 0.07, to: 1800 }); noise(0.12, { freq: 4000, q: 0.8, vol: 0.25 }); },
     whoosh() { noise(0.28, { freq: 500, to: 2600, q: 0.6, vol: 0.18 }); },
     thud() { tone(140, 0.12, { to: 70, vol: 0.35 }); noise(0.06, { freq: 1800, q: 0.7, vol: 0.4 }); },
     tick(hard) { tone(hard ? 1400 : 1000, 0.05, { type: 'square', vol: hard ? 0.14 : 0.08 }); },
@@ -613,6 +614,14 @@ window.UnoFX = (() => {
             if (e.by === ctx.me) splash('UNO!', '#d7263d');
           });
           t += 300;
+          break;
+        case 'jump':
+          at(t, () => {
+            shout(ctx.rectOf(e.by), '⚡ Перехват!', 'jump');
+            sfx.jump();
+            shake(ctx.boxOf(e.target));
+          });
+          t += 250;
           break;
         case 'emote':
           at(t, () => emote(e.emote, e.by === ctx.me ? ctx.boxOf(ctx.me).getBoundingClientRect() : ctx.rectOf(e.by), e.by === ctx.me));

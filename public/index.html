@@ -25,6 +25,7 @@
         <div class="set-row"><span class="set-label">⏱ Раунд</span><div id="homeRound" class="chips"></div></div>
         <div class="set-row"><span class="set-label">🏆 Партия до</span><div id="homeTarget" class="chips"></div></div>
         <div class="set-row"><span class="set-label">🔁 Перевод +2/+4</span><div id="homeStack" class="chips"></div></div>
+        <div class="set-row"><span class="set-label">⚡ Перехват (Jump-In)</span><div id="homeJump" class="chips"></div></div>
       </div>
 
       <div class="mode">
@@ -70,6 +71,7 @@
         <div class="set-row"><span class="set-label">⏱ Раунд</span><div id="lobbyRound" class="chips"></div></div>
         <div class="set-row"><span class="set-label">🏆 Партия до</span><div id="lobbyTarget" class="chips"></div></div>
         <div class="set-row"><span class="set-label">🔁 Перевод +2/+4</span><div id="lobbyStack" class="chips"></div></div>
+        <div class="set-row"><span class="set-label">⚡ Перехват (Jump-In)</span><div id="lobbyJump" class="chips"></div></div>
       </div>
 
       <button id="startBtn" class="btn btn-primary btn-wide">Начать игру</button>
@@ -82,6 +84,7 @@
           <li><b>⊘ Пропуск</b> — следующий пропускает ход. <b>⇄ Разворот</b> — меняет направление. <b>+2</b> — следующий берёт 2 карты и пропускает ход.</li>
           <li><b>+4</b> — вы выбираете цвет, следующий берёт 4 карты и пропускает ход. Чёрные карты («Закажи цвет» и «+4») можно класть в любой момент.</li>
           <li><b>Перевод</b> (если включён в настройках): на «+2» можно положить «+2» любого цвета или «+4»; на «+4» — только «+4». Штраф копится и уходит дальше, а тот, кому нечем перевести, берёт всю сумму — например, +6 или +8 — и пропускает ход.</li>
+          <li><b>Перехват</b> (если включён): если у вас точно такая же карта, как верхняя в сбросе — тот же цвет и то же значение, — её можно положить вне очереди, пока очередной игрок не сходил и не взял карту. Дальше игра идёт от вас. Чёрными картами перехватывать нельзя, во время перевода +2/+4 — тоже.</li>
           <li><b>Время на ход.</b> Если раунд идёт на время, на каждый ход даётся до 30 секунд, и чем ближе конец раунда, тем меньше (минимум 4 секунды). Не успели — берёте карту и пропускаете ход.</li>
           <li>Нечем или не хочется ходить — возьмите карту. Если она подходит, её можно сразу сыграть, иначе ход переходит дальше.</li>
           <li>Когда остаётся одна карта — нажмите <b>UNO!</b> (можно заранее, держа 2 карты в свой ход). Не успели — любой может вас «поймать», и вы берёте 2 карты.</li>

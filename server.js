@@ -29,7 +29,9 @@ const PILE_VISIBLE = 10;
 const TURN_MAX_SECONDS = 30;       // лимит на ход при игре на время (в начале раунда)
 const TURN_MIN_SECONDS = 4;        // минимальный лимит на ход (в самом конце раунда)
 const EMOTES = ['angry', 'laugh', 'joy', 'cool', 'shock', 'think', 'cry', 'love'];
-const EMOTE_COOLDOWN_MS = 2500;           // сколько верхних карт сброса видно в стопке
+const EMOTE_COOLDOWN_MS = 2500;
+const BOT_JUMP_DELAY_MS = [700, 1600];  // задержка перехвата у компьютера (чтобы люди успевали первыми)
+const BOT_JUMP_CHANCE = 0.6;           // сколько верхних карт сброса видно в стопке
 const AFK_SECONDS = 30;            // через сколько секунд за отключившегося игрока ход делается автоматически
 const ROOM_TTL_MS = 3 * 60 * 60 * 1000; // пустая комната удаляется через 3 часа без активности
 const BOT_NAMES = ['Вася', 'Маша', 'Гоша', 'Оля', 'Петя', 'Зина', 'Тоша', 'Лиза'];
@@ -116,7 +118,7 @@ function createRoom() {
     logSeq: 0,
     clients: new Set(),
     lastActivity: Date.now(),
-    settings: { roundMinutes: ROUND_MINUTES, target: TARGET_SCORE, stacking: true },
+    settings: { roundMinutes: ROUND_MINUTES, target: TARGET_SCORE, stacking: true, jumpIn: true },
     pending: null,           // накопленный штраф при переводе: { type: 'draw2'|'wild4', count }
     roundStartedAt: null,
     roundEndsAt: null,
@@ -138,7 +140,9 @@ function applySettings(room, body) {
     if (!TARGET_OPTIONS.includes(t)) fail('Недопустимая цель партии');
     st.target = t;
   }
-  if (body.stacking !== undefined) st.stacking = body.stacking === true || body.stacking === 'true' || body.stacking === 1;
+  const bool = (v) => v === true || v === 'true' || v === 1;
+  if (body.stacking !== undefined) st.stacking = bool(body.stacking);
+  if (body.jumpIn !== undefined) st.jumpIn = bool(body.jumpIn);
 }
 
 function addPlayer(room, name) {
@@ -220,6 +224,25 @@ function isPlayable(room, player, card) {
   if (room.drawnCardId && card.id !== room.drawnCardId) return false;
   if (card.value === 'wild' || card.value === 'wild4') return true; // чёрные карты — в любой момент
   return card.color === room.currentColor || card.value === topCard(room).value;
+}
+
+// Перехват (Jump-In): карта, точно совпадающая с верхней, кладётся вне очереди
+function canJump(room, player, card) {
+  if (!room.settings.jumpIn || room.phase !== 'playing') return false;
+  if (currentPlayer(room) === player) return false;
+  if (room.pending || room.drawnCardId) return false; // очередник уже взял карту / идёт перевод штрафа
+  const top = topCard(room);
+  return !!top && top.color !== 'wild' && card.color === top.color && card.value === top.value;
+}
+
+function jumpIn(room, player, cardId, chosenColor) {
+  const card = player.hand.find((c) => c.id === cardId);
+  if (!card || !canJump(room, player, card)) fail('Перехватить можно только точно такой же картой, пока игрок не сходил');
+  const prev = currentPlayer(room);
+  setTurn(room, room.players.indexOf(player));
+  log(room, `${player.name} перехватывает ход у ${prev.name}!`, { fx: 'jump', by: player.id, target: prev.id });
+  clearTimeout(room.jumpTimer); room.jumpTimer = null;
+  playCard(room, player, cardId, chosenColor);
 }
 
 // Лимит времени на ход: чем меньше осталось до конца раунда, тем меньше времени на решение
@@ -431,6 +454,7 @@ function viewFor(room, player) {
     })),
     hand: player.hand,
     playable: myTurn ? player.hand.filter((c) => isPlayable(room, player, c)).map((c) => c.id) : [],
+    jumpable: !myTurn ? player.hand.filter((c) => canJump(room, player, c)).map((c) => c.id) : [],
     turnId: cur ? cur.id : null,
     direction: room.direction,
     top: topCard(room) || null,
@@ -518,12 +542,34 @@ const rand = (a, b) => a + Math.random() * (b - a);
 function clearBotTimers(room) {
   clearTimeout(room.botTimer); room.botTimer = null;
   clearTimeout(room.catchTimer); room.catchTimer = null;
+  clearTimeout(room.jumpTimer); room.jumpTimer = null;
 }
 
 function scheduleBots(room) {
   if (room.phase !== 'playing' || !rooms.has(room.code)) { clearBotTimers(room); return; }
   // компьютер ходит, только пока за столом есть кто-то из людей
   if (!humans(room).some((p) => p.conns > 0)) return;
+
+  // перехват компьютером
+  if (room.settings.jumpIn && !room.jumpTimer && !room.pending && !room.drawnCardId) {
+    const top = topCard(room);
+    const jumpers = room.players.filter((b) => b.isBot && b !== currentPlayer(room) && b.hand.some((c) => canJump(room, b, c)));
+    if (jumpers.length && Math.random() < BOT_JUMP_CHANCE) {
+      const bot = jumpers[crypto.randomInt(jumpers.length)];
+      const topId = top.id, turn = room.turn;
+      room.jumpTimer = setTimeout(() => {
+        room.jumpTimer = null;
+        if (room.phase !== 'playing' || topCard(room).id !== topId || room.turn !== turn) return;
+        const card = bot.hand.find((c) => canJump(room, bot, c));
+        if (!card) return;
+        try {
+          if (bot.hand.length === 2 && Math.random() < BOT_UNO_CHANCE) doUno(room, bot);
+          jumpIn(room, bot, card.id);
+        } catch (e) { console.error('bot jump', e); }
+        broadcast(room);
+      }, rand(BOT_JUMP_DELAY_MS[0], BOT_JUMP_DELAY_MS[1]));
+    }
+  }
 
   const cur = currentPlayer(room);
   if (cur && cur.isBot && !room.botTimer) {
@@ -665,8 +711,9 @@ function handleApi(name, body) {
         break;
 
       case 'play':
-        needTurn();
-        playCard(room, player, String(body.cardId), body.color);
+        if (room.phase !== 'playing') fail('Раунд не идёт');
+        if (myTurn) playCard(room, player, String(body.cardId), body.color);
+        else jumpIn(room, player, String(body.cardId), body.color);
         break;
 
       case 'draw':
@@ -711,7 +758,7 @@ function handleApi(name, body) {
         if (!isHost) fail('Настройки меняет создатель комнаты');
         if (room.phase === 'playing') fail('Настройки можно менять между раундами');
         applySettings(room, body);
-        log(room, `Настройки: раунд — ${room.settings.roundMinutes ? room.settings.roundMinutes + ' мин' : 'без ограничения'}, партия до ${room.settings.target} очков, перевод +2/+4 — ${room.settings.stacking ? 'да' : 'нет'}`);
+        log(room, `Настройки: раунд — ${room.settings.roundMinutes ? room.settings.roundMinutes + ' мин' : 'без ограничения'}, партия до ${room.settings.target} очков, перевод +2/+4 — ${room.settings.stacking ? 'да' : 'нет'}, перехват — ${room.settings.jumpIn ? 'да' : 'нет'}`);
         if (room.phase === 'roundOver') {
           const leader = Math.max(...room.players.map((p) => p.score));
           room.gameOver = leader >= room.settings.target;
@@ -890,7 +937,7 @@ let saving = Promise.resolve();
 function serialize() {
   const out = [];
   for (const r of rooms.values()) {
-    const { clients, botTimer, catchTimer, ...rest } = r;
+    const { clients, botTimer, catchTimer, jumpTimer, ...rest } = r;
     rest.players = r.players.map(({ conns, disconnectedAt, ...p }) => p);
     out.push(rest);
   }
@@ -904,7 +951,8 @@ function restore(json) {
     r.clients = new Set();
     r.botTimer = null;
     r.catchTimer = null;
-    r.settings = Object.assign({ roundMinutes: ROUND_MINUTES, target: TARGET_SCORE, stacking: true }, r.settings);
+    r.jumpTimer = null;
+    r.settings = Object.assign({ roundMinutes: ROUND_MINUTES, target: TARGET_SCORE, stacking: true, jumpIn: true }, r.settings);
     r.history = r.history || [];
     r.players.forEach((p) => { p.conns = 0; p.disconnectedAt = now; });
     if (r.phase === 'playing') { r.turnStartedAt = now; const lim = turnLimitMs(r); r.turnEndsAt = lim ? now + lim : null; }
