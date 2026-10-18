@@ -93,6 +93,7 @@
   }
 
   function leaveLocal(message) {
+    setInviteMode(false);
     if (es) { es.close(); es = null; }
     session = null; view = null;
     store.clear();
@@ -665,6 +666,42 @@
   }
 
   /* ---------- запуск ---------- */
+  /* ---------- режим приглашения (переход по ссылке с кодом) ---------- */
+  let inviteRoom = null;
+  function setInviteMode(on) {
+    document.body.classList.toggle('invite-mode', on);
+    $('invite').classList.toggle('hidden', !on);
+    $('inviteActions').classList.toggle('hidden', !on);
+    $('homeMain').classList.toggle('hidden', on);
+  }
+  async function showInvite(code) {
+    inviteRoom = code;
+    $('inviteCode').textContent = code;
+    $('inviteInfo').textContent = 'Загружаем информацию о комнате…';
+    setInviteMode(true);
+    try {
+      const info = await api('peek', { room: code });
+      const n = info.players.length;
+      let text = info.host ? `${info.host} приглашает вас сыграть в UNO.` : 'Вас приглашают сыграть в UNO.';
+      if (info.full) text += ' Комната уже заполнена.';
+      else if (info.phase === 'playing') text += ' Игра уже идёт — присоединиться можно между раундами.';
+      else text += ` В комнате ${n} ${plural(n, 'игрок', 'игрока', 'игроков')}: ${info.players.join(', ')}.`;
+      const el = $('inviteInfo'); el.textContent = '';
+      if (info.host) { const b = document.createElement('b'); b.textContent = info.host; el.append(b, document.createTextNode(text.slice(info.host.length))); }
+      else el.textContent = text;
+      $('inviteJoinBtn').disabled = !!info.full;
+    } catch (e) {
+      $('inviteInfo').textContent = 'Такой комнаты нет: ' + e.message.replace(/\.\s*$/, '') + '. Возможно, игра уже закончилась — создайте новую.';
+      $('inviteJoinBtn').disabled = true;
+    }
+  }
+  $('inviteJoinBtn').onclick = async () => {
+    const name = getName(); if (!name) return;
+    try { enterRoom(await api('join', { room: inviteRoom, name }), name); } catch (e) { toast(e.message); }
+  };
+  $('inviteOther').onclick = () => { setInviteMode(false); $('codeInput').value = inviteRoom || ''; $('nameInput').focus(); };
+  $('nameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !$('inviteActions').classList.contains('hidden')) { e.stopImmediatePropagation(); $('inviteJoinBtn').click(); } }, true);
+
   async function init() {
     $('nameInput').value = store.name();
     const urlRoom = (new URL(location.href).searchParams.get('room') || '').toUpperCase();
@@ -680,7 +717,7 @@
       }
     }
     show('home');
-    if (urlRoom && $('nameInput').value) $('joinBtn').focus();
+    if (urlRoom) { showInvite(urlRoom); if (!$('nameInput').value) $('nameInput').focus(); }
     else $('nameInput').focus();
   }
 

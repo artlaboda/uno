@@ -677,6 +677,20 @@ function handleApi(name, body) {
     return { room: room.code, token: player.token, playerId: player.id };
   }
 
+  if (name === 'peek') {
+    const room = rooms.get(String(body.room || '').toUpperCase().trim());
+    if (!room) fail('Комната не найдена. Проверьте код');
+    const host = room.players.find((p) => p.id === room.hostId);
+    return {
+      room: room.code,
+      host: host ? host.name : null,
+      players: room.players.map((p) => p.name),
+      phase: room.phase,
+      full: room.players.length >= MAX_PLAYERS,
+      settings: room.settings,
+    };
+  }
+
   if (name === 'join') {
     const code = String(body.room || '').toUpperCase().trim();
     const room = rooms.get(code);

@@ -16,10 +16,24 @@
       <div class="logo"><span>U</span><span>N</span><span>O</span></div>
       <p class="tagline">Играйте с компьютером или с друзьями — каждый со своего устройства.</p>
 
+      <div id="invite" class="invite hidden">
+        <div class="invite-badge">🎉 Вас пригласили в игру</div>
+        <div id="inviteInfo" class="invite-info"></div>
+        <div class="invite-code">Комната <b id="inviteCode"></b></div>
+      </div>
+
       <label class="field">
         <span>Ваше имя</span>
         <input id="nameInput" maxlength="20" autocomplete="nickname" placeholder="Например, Артём">
       </label>
+
+      <div id="inviteActions" class="hidden">
+        <button id="inviteJoinBtn" class="btn btn-primary btn-wide btn-glow">Войти в игру →</button>
+        <p class="muted small center" style="margin:10px 0 0">Введите имя и нажмите кнопку — настройки партии задаёт создатель комнаты.</p>
+        <button id="inviteOther" class="btn btn-ghost btn-wide btn-small" style="margin-top:14px">Хочу свою игру или другую комнату</button>
+      </div>
+
+      <div id="homeMain">
 
       <div class="settings-box">
         <div class="set-row"><span class="set-label">⏱ Раунд</span><div id="homeRound" class="chips"></div></div>
@@ -47,6 +61,7 @@
           <input id="codeInput" maxlength="5" placeholder="КОД" autocomplete="off" autocapitalize="characters">
           <button id="joinBtn" class="btn">Войти</button>
         </div>
+      </div>
       </div>
     </div>
   </section>

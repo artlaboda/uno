@@ -70,6 +70,23 @@ input:focus { border-color: var(--accent); }
 /* ---------- стартовый экран и лобби ---------- */
 .screen { min-height: 100vh; }
 #home, #lobby { display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.invite { text-align: center; margin: 16px 0 4px; }
+.invite-badge { display: inline-block; font-weight: 800; font-size: 15px; padding: 6px 14px; border-radius: 999px; background: rgba(242,183,5,.15); border: 1px solid var(--accent); color: var(--accent); }
+.invite-info { margin-top: 12px; font-size: 16px; line-height: 1.45; }
+.invite-info b { color: var(--accent); }
+.invite-code { margin-top: 8px; color: var(--muted); font-size: 13px; }
+.invite-code b { color: var(--ink); letter-spacing: 3px; font-size: 16px; }
+.btn-glow {
+  font-size: 18px; padding: 14px 16px; position: relative; overflow: hidden;
+  background: linear-gradient(110deg, #f2b705 0%, #ffd84d 40%, #f2b705 60%, #ffcf2e 100%);
+  background-size: 250% 100%;
+  animation: glowShift 2.2s linear infinite, glowPulse 1.6s ease-in-out infinite;
+}
+@keyframes glowShift { 0% { background-position: 100% 0; } 100% { background-position: -150% 0; } }
+@keyframes glowPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(242,183,5,.6), 0 8px 24px rgba(0,0,0,.35); transform: scale(1); } 50% { box-shadow: 0 0 0 10px rgba(242,183,5,0), 0 8px 24px rgba(0,0,0,.35); transform: scale(1.02); } }
+body.invite-mode .logo { transform: scale(.85); margin-bottom: -8px; }
+body.invite-mode .tagline { display: none; }
+
 .home-card, .lobby-card {
   width: 100%; max-width: 420px;
   background: var(--panel);
